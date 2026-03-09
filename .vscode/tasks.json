@@ -1,0 +1,19 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+{
+  "label": "Run Pico-8",
+  "type": "shell",
+  "command": "/Applications/PICO-8.app/Contents/MacOS/pico8",
+  "args": ["${workspaceFolder}/game1.p8"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      }
+    }
+  ]
+}
