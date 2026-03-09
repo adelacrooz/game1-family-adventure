@@ -49,6 +49,20 @@ Pico-8 stays open while you iterate; reload after each save to test your latest 
 
 ---
 
+## 6. Capture a Label (for HTML Export)
+
+Before exporting to HTML (e.g. for itch.io or GitHub Pages), you must capture a **label** — the 128×128 preview image that Pico-8 uses in the web export.
+
+1. **Run** your game (`Cmd+Enter` / `Ctrl+Enter`).
+2. Let the game show the screen you want as the preview (gameplay, title, etc.).
+3. Press **F7** (or **Ctrl+7** on Mac) to capture the current screen as the label.
+4. Press **Esc** to open the command line.
+5. Run `export game1.html` (or your cart name) — the export should succeed.
+
+**Note:** Typing `label` in the command line gives a syntax error; the label is captured via the keyboard shortcut, not a command.
+
+---
+
 ## Custom Tasks
 
 Tasks are defined in `.vscode/tasks.json`. To run a task: open the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`), choose **Tasks: Run Task**, then pick the task.
