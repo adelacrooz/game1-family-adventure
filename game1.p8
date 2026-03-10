@@ -25,6 +25,8 @@ function goto_scene(s)
  p.on_ground=false
  p.can_dash=true
  dash_timer=0
+ wall_dir=0
+ wall_timer=0
  ghosts={}
  prev_o=false
  prev_x=false
@@ -44,7 +46,11 @@ dash_timer=0
 dash_dvx=0
 dash_dvy=0
 dash_spr=6
+dash_is_ground=false
 suppress_lf=false
+wall_dir=0          -- -1=left wall, 1=right wall, 0=none
+wall_timer=0        -- frames of grace after touching wall
+on_wall=false       -- true while actively pressed against a wall
 ghosts={}
 prev_o=false
 prev_x=false
@@ -62,6 +68,9 @@ jump_buffer_frames=5
 dash_spd=6.5
 dash_frames=6
 double_tap_frames=10
+wall_jump_spd=2.8   -- horizontal kick when wall jumping
+wall_coyote=8       -- grace frames after leaving a wall
+wall_slide_max=0.6  -- max fall speed while sliding a wall
 
 -- indoor speed
 indoor_spd=1.5
@@ -71,29 +80,37 @@ indoor_spd=1.5
 -- ===========================
 level_width=960
 platforms={
- {0,120,level_width+8,16},  -- ground (extended 8px past edge to cover wrap seam)
- {48,96,48,8},
- {128,72,48,8},
- {208,96,48,8},
- {288,56,64,8},
- {80,48,32,8},
- {260,32,24,8},
+ -- ground split around pit (gap x=620-668, 48px wide = 8x player w)
+ {0,120,620,16},
+ {668,120,300,16},
+ -- pit side walls (solid, below ground plate, y=136-380)
+ {618,136,2,244},
+ {668,136,2,244},
+ -- pit floor (solid, 260px below ground)
+ {620,380,48,8},
+ -- floating platforms (onetop: pass through from below, land on top)
+ {48,96,48,8,  onetop=true},
+ {128,72,48,8, onetop=true},
+ {208,96,48,8, onetop=true},
+ {288,56,64,8, onetop=true},
+ {80,48,32,8,  onetop=true},
+ {260,32,24,8, onetop=true},
  -- area 2
- {400,96,64,8},
- {480,64,48,8},
- {560,96,56,8},
- {440,40,32,8},
- {520,24,24,8},
- -- area 3
- {640,96,48,8},
- {720,72,64,8},
- {800,96,48,8},
- {680,48,40,8},
- {760,32,32,8},
+ {400,96,64,8, onetop=true},
+ {480,64,48,8, onetop=true},
+ {560,96,56,8, onetop=true},
+ {440,40,32,8, onetop=true},
+ {520,24,24,8, onetop=true},
+ -- area 3 (was {640,96,48,8} -- shifted right past wider pit)
+ {672,96,40,8, onetop=true},
+ {720,72,64,8, onetop=true},
+ {800,96,48,8, onetop=true},
+ {680,48,40,8, onetop=true},
+ {760,32,32,8, onetop=true},
  -- area 4
- {880,96,80,8},
- {920,56,40,8},
- {860,36,32,8},
+ {880,96,80,8, onetop=true},
+ {920,56,40,8, onetop=true},
+ {860,36,32,8, onetop=true},
 }
 
 -- house door trigger (left edge of outdoor level)
@@ -570,7 +587,13 @@ end
 
 function resolve_x_out()
  for pl in all(platforms) do
-  if rect_overlap(p.x+p.vx,p.y,p.w,p.h,pl[1],pl[2],pl[3],pl[4]) then
+  if not pl.onetop and
+   rect_overlap(p.x+p.vx,p.y,p.w,p.h,pl[1],pl[2],pl[3],pl[4]) then
+   if not p.on_ground then
+    wall_dir=p.vx<0 and -1 or 1
+    wall_timer=wall_coyote
+    on_wall=true
+   end
    p.vx=0 return
   end
  end
@@ -582,12 +605,17 @@ function resolve_y_out()
  for pl in all(platforms) do
   if rect_overlap(p.x,p.y+p.vy,p.w,p.h,pl[1],pl[2],pl[3],pl[4]) then
    if p.vy>0 then
-    p.y=pl[2]-p.h
-    p.on_ground=true
-   else
+    -- land on top only if player was above platform (one-way: skip if below)
+    if not pl.onetop or p.y+p.h<=pl[2] then
+     p.y=pl[2]-p.h
+     p.on_ground=true
+     p.vy=0 return
+    end
+   elseif not pl.onetop then
+    -- bounce off ceiling only for solid platforms
     p.y=pl[2]+pl[4]
+    p.vy=0 return
    end
-   p.vy=0 return
   end
  end
  p.y+=p.vy
@@ -622,6 +650,8 @@ end
 -- init
 -- ===========================
 function _init()
+ palt(0,false)
+ palt(5,true)
  cartdata("game1_save")
  init_notes()
  tasks.fish=dget(30)
@@ -658,9 +688,9 @@ function update_player_anim()
  if grnd and p.land_flash<=0 and btn(5)
   and abs(p.prev_vx)>0.05
   and (p.vx>0)~=(p.prev_vx>0) then
-  p.land_flash=8
-  p.is_dir_flash=true
-  sfx(7)
+  if suppress_lf then suppress_lf=false
+  else p.land_flash=8 p.is_dir_flash=true sfx(7)
+  end
  end
  if p.land_flash>0 then p.land_flash-=1 end
  if p.vx>0.1 then p.facing=1 elseif p.vx<-0.1 then p.facing=-1 end
@@ -671,21 +701,24 @@ end
 function get_player_spr()
  local grnd=scene~="outdoor" or p.on_ground
  local fx=p.facing<0
- if p.land_flash>0 then return 8,p.is_dir_flash~=fx end
+ if p.land_flash>0 then return 30,p.is_dir_flash~=fx end
  if not grnd then
-  if dash_timer>0 then return 6,fx end
-  if p.vy<0 then return 6,fx else return 7,fx end
+  if dash_timer>0 then return 26,fx end
+  if p.vy<0 then return 26,fx else return 28,fx end
  end
  if abs(p.vx)>0.1 then
   local spd=btn(5) and 4 or 6
-  return 3+flr(p.anim_t/spd)%3,fx
+  return 20+flr(p.anim_t/spd)%3*2,fx
  end
- return 1+flr(p.anim_t/20)%2,fx
+ return 16+flr(p.anim_t/20)%2*2,fx
 end
 
 function draw_player()
  local s,fx=get_player_spr()
- spr(s,p.x-1,p.y,1,1,fx)
+ local flash=not p.can_dash or (dash_timer>0 and dash_is_ground)
+ if flash then pal(1,7) end
+ spr(s,p.x-5,p.y-8,2,2,fx)
+ if flash then pal(1,1) end
 end
 
 -- ===========================
@@ -725,8 +758,11 @@ function update_outdoor()
  if p.on_ground then
   coyote_timer=coyote_frames
   p.can_dash=true
+  wall_dir=0
+  wall_timer=0
  else
   coyote_timer=max(0,coyote_timer-1)
+  wall_timer=max(0,wall_timer-1)
  end
  if jump_buffer>0 then jump_buffer-=1 end
 
@@ -736,7 +772,7 @@ function update_outdoor()
   p.vy=dash_dvy
   if dash_timer==0 then
    p.vy=p.vy*0.3
-   if dash_spr==3 then suppress_lf=true end
+   if dash_is_ground then suppress_lf=true end
   end
   if dash_timer>0 and dash_timer%2==0 and not p.on_ground then
    add(ghosts,{x=p.x,y=p.y,fx=p.facing<0,t=8,s=dash_spr})
@@ -761,7 +797,8 @@ function update_outdoor()
    p.vx*=ground_friction
    if abs(p.vx)<0.1 then p.vx=0 end
   end
-  p.vy=min(p.vy+gravity,max_fall)
+  local fall_cap=on_wall and p.vy>0 and wall_slide_max or max_fall
+  p.vy=min(p.vy+gravity,fall_cap)
  end
 
  local o_press=btn(4) and not prev_o
@@ -778,6 +815,14 @@ function update_outdoor()
    inv[near_node.typ]+=1
    last_gathered=near_node.typ
    res_flash=30
+  elseif not p.on_ground and wall_timer>0 then
+   -- wall jump: kick away from wall
+   p.vx=-wall_dir*wall_jump_spd
+   p.vy=jump_force
+   wall_timer=0
+   coyote_timer=0
+   jump_buffer=0
+   sfx(0)
   elseif not p.on_ground and p.can_dash then
    -- air dash: press o while airborne (once per jump)
    local dx=0
@@ -794,9 +839,11 @@ function update_outdoor()
    end
    p.vx=dash_dvx
    p.vy=dash_dvy
-   dash_spr=6
-   add(ghosts,{x=p.x,y=p.y,fx=p.facing<0,t=8,s=6})
+   dash_spr=26
+   sfx(8)
+   add(ghosts,{x=p.x,y=p.y,fx=p.facing<0,t=8,s=26})
    dash_timer=dash_frames
+   dash_is_ground=false
    p.can_dash=false
   else
    jump_buffer=jump_buffer_frames
@@ -817,14 +864,17 @@ function update_outdoor()
    if dx==0 then dx=p.facing end
    dash_dvx=dx*dash_spd
    dash_dvy=0
-   dash_spr=3
+   dash_spr=26
+   sfx(8)
    p.vx=dash_dvx
    dash_timer=dash_frames
+   dash_is_ground=true
   else
    x_tap_timer=double_tap_frames
   end
  end
 
+ on_wall=false       -- reset before resolve so gravity read prev-frame value
  resolve_x_out()
  resolve_y_out()
 
@@ -915,22 +965,14 @@ end
 -- draws the world background (called twice for seamless looping)
 function draw_world_bg()
  rectfill(0,0,level_width,120,12)
- -- mountains
- rectfill(560,70,680,120,5)
- rectfill(578,50,662,70,5)
- rectfill(596,32,644,50,5)
- rectfill(614,18,626,32,5)
- rectfill(613,15,627,20,7)
- rectfill(700,78,840,120,5)
- rectfill(720,56,820,78,5)
- rectfill(742,36,798,56,5)
- rectfill(760,20,780,36,5)
- rectfill(759,17,781,23,7)
- -- lake
- rectfill(10,96,390,120,1)
- rectfill(10,96,390,99,12)
- line(20,106,380,106,13)
- line(20,113,380,113,13)
+ -- underground dirt layer (visible when camera scrolls into pit)
+ rectfill(0,120,level_width,390,4)
+ -- pit shaft interior (black opening)
+ rectfill(620,120,667,388,0)
+ -- tile sprite 0 along pit perimeter (left wall, right wall, floor)
+ for ty=120,380,8 do spr(0,610,ty) end  -- left inner strip
+ for ty=120,380,8 do spr(0,668,ty) end  -- right inner strip
+ for tx=620,660,8 do spr(0,tx,388) end  -- bottom row
  -- platforms
  for pl in all(platforms) do
   rectfill(pl[1],pl[2],pl[1]+pl[3]-1,pl[2]+pl[4]-1,3)
@@ -959,27 +1001,32 @@ end
 function draw_outdoor()
  cls(1)
  local cam_x=p.x-64  -- unclamped for seamless loop
+ -- scroll down when player's feet go below ground (y=120)
+ local cam_y=max(0,p.y+p.h-120)
 
  -- primary world draw
- camera(cam_x,0)
+ camera(cam_x,cam_y)
  draw_world_bg()
 
  -- secondary draw to show the far end of the world near each edge
  if cam_x>level_width-128 then
-  camera(cam_x-level_width,0)
+  camera(cam_x-level_width,cam_y)
   draw_world_bg()
  elseif cam_x<0 then
-  camera(cam_x+level_width,0)
+  camera(cam_x+level_width,cam_y)
   draw_world_bg()
  end
 
  -- dash ghosts and player (primary world space)
- camera(cam_x,0)
+ camera(cam_x,cam_y)
  for g in all(ghosts) do
   local gc=g.t>4 and 7 or 1
+  palt(0,true)
   for c=1,15 do pal(c,gc) end
-  spr(g.s,g.x-1,g.y,1,1,g.fx)
+  spr(g.s,g.x-5,g.y-8,2,2,g.fx)
   pal()
+  palt(0,false)
+  palt(5,true)
  end
  draw_player()
 
@@ -1074,30 +1121,30 @@ function draw_indoor()
  print(scene,2,10,6)
 end
 __gfx__
-00000000001111100011111000011111000111110001111100011111000111110000000000000000000000000000000000000000000000000000000000000000
-00000000001ffff0001ffff00001ffff0001ffff0001ffff0001ffff0001ffff0111110000000000000000000000000000000000000000000000000000000000
-0000000000f71f1000f71f10000ff71f000ff71f000ff71f000ff71f000ff71f01ffff0000000000000000000000000000000000000000000000000000000000
-0000000000fffff000fffef0000ffffe000ffffe000ffffe000ffffe000ffffe0f71f10000000000000000000000000000000000000000000000000000000000
-00000000000ff000002222000f2220000f2220000f22200000222000000022200fffef0000000000000000000000000000000000000000000000000000000000
-00000000002222000f0220f00002200000022000000220000f0220000000220f002222f000000000000000000000000000000000000000000000000000000000
-000000000f02d0f00002d0000220d000002d00000dd0200000d20000000002d00f022d0000000000000000000000000000000000000000000000000000000000
-0000000000200d0000200d000000d000002d0000000020000d2000000000002d000022dd00000000000000000000000000000000000000000000000000000000
-00000555555500000000055555550000000000000000000000000555555500000000000000000000000005555555000000000555555500000000055555550000
-00005111111150000000511111115000000005555555000000005111111150000000055555550000000051111111500000005111111150000000511111115000
-00051111111115000005111111111500000051111111500000051111111115000000511111115000000511111111150000051111111115000005111111111500
-00511111111115000051111111111500000511111111150000511111111115000005111111111500005111111111150000511111111115000051111111111500
-00511111111115000051111111111500005111111111150000511111111115000051111111111500005111111111150000511111111115000051111111111500
-00511ff11111150000511ff1111115000051111111111500005111111ff115000051111111111500005111111ff11500005111111ff1150000511ff111111500
-0054ff5ffff5f5000054ff5ffff5f500005111111ff115000054ffffff5ff500005111111ff115000054ffffff5ff5000054ffffff5ff5000054ff5fff5ff500
-0054ff5ffff5f5000054ff5ffff5f5000054ffffff5ff5000054ffffff5ff5000054ffffff5ff5000054ffffff5ff5000054ffffff5ff5000054ff5fff5ff500
-0005efffffffe5000005effff8ffe5000054ffffff5ff5000005ffffffff85000054ffffff5ff5000005ffffffff85000005ffffffff85000005efff8fffe500
-00005fffffff50000005ddddddddd5000005ffffffff850000555fffffff50000005ffffffff850000005fffffff500000005fffffff500000005fffffff5550
-0005ddddddddd500005fdddddddddf5000555fffffff500005ffddddddd5000000555fffffff500000005dddddd5000000005dddddd5000000005ddddddddff5
-005fdddddddddf50005ffdddddddff5005ffddddddd500000055ddddddd5000005ffddddddd5000000005dfdddd5000000005ddddfd500000005fdddddddd550
-005ffdddddddff5000055ddddddd55000055ddddddd5000000005dddddd500000055ddddddd5000000005fddddd5000000005dddddf50000005f55dddddd5500
-0005566666665500000056666666500000055dddddd50000000056666665000000055dddddd50000000056666650000000000566666500000005005666662250
-00005255555250000000525555525000005225555525000000005255552500000052255555250000000525552500000000000052555250000000000555555550
-00005500000550000000550000055000000550000550000000005500055000000005500005500000000550055000000000000005500550000000000000000000
+46444444001111100011111000011111000111110001111100011111000111110000000000000000000000000000000000000000000000000000000000000000
+4444644d001ffff0001ffff00001ffff0001ffff0001ffff0001ffff0001ffff0111110000000000000000000000000000000000000000000000000000000000
+4444464400f71f1000f71f10000ff71f000ff71f000ff71f000ff71f000ff71f01ffff0000000000000000000000000000000000000000000000000000000000
+4444444400fffff000fffef0000ffffe000ffffe000ffffe000ffffe000ffffe0f71f10000000000000000000000000000000000000000000000000000000000
+44544444000ff000002222000f2220000f2220000f22200000222000000022200fffef0000000000000000000000000000000000000000000000000000000000
+444444d4002222000f0220f00002200000022000000220000f0220000000220f002222f000000000000000000000000000000000000000000000000000000000
+d44424440f02d0f00002d0000220d000002d00000dd0200000d20000000002d00f022d0000000000000000000000000000000000000000000000000000000000
+4444424400200d0000200d000000d000002d0000000020000d2000000000002d000022dd00000000000000000000000000000000000000000000000000000000
+55555000000055555555500000005555555555555555555555555000000055555555555555555555555550000000555555555000000055555555555555555555
+55550111111105555555011111110555555550000000555555550111111105555555500000005555555501111111055555550111111105555555500000005555
+55501111111110555550111111111055555501111111055555501111111110555555011111110555555011111111105555501111111110555555011111110555
+55011111111110555501111111111055555011111111105555011111111110555550111111111055550111111111105555011111111110555550111111111055
+55011111111110555501111111111055550111111111105555011111111110555501111111111055550111111111105555011111111110555501111111111055
+55011ff11111105555011ff1111110555501111111111055550111111ff110555501111111111055550111111ff11055550111111ff110555501111111111055
+5504ff0ffff0f0555504ff0ffff0f055550111111ff110555504ffffff0ff055550111111ff110555504ffffff0ff0555504ffffff0ff05555011ff111111055
+5504ff0ffff0f0555504ff0ffff0f0555504ffffff0ff0555504ffffff0ff0555504ffffff0ff0555504ffffff0ff0555504ffffff0ff0555504ff0fff0ff055
+5550efffffffe0555550effff8ffe0555504ffffff0ff0555550ffffffff80555504ffffff0ff0555550ffffffff80555550ffffffff80555504ff0fff0ff055
+55550fffffff05555550ddddddddd0555550ffffffff805555000fffffff05555550ffffffff805555550fffffff055555550fffffff05555550efff8fffe055
+5550ddddddddd055550fdddddddddf0555000fffffff055550ffddddddd0555555000fffffff055555550dddddd0555555550dddddd0555555550fffffff0005
+550fdddddddddf05550ffdddddddff0550ffddddddd055555500ddddddd0555550ffddddddd0555555550dfdddd0555555550ddddfd0555555550ddddddddff0
+550ffdddddddff0555500ddddddd00555500ddddddd0555555550dddddd055555500ddddddd0555555550fddddd0555555550dddddf055555550fdddddddd005
+5550066666660055555506666666055555500dddddd05555555506666660555555500dddddd0555555550666660555555555506666605555550f00dddddd0055
+555502000002055555550200000205555502200000e05555555502000e055555550ee00000205555555020002055555555555502000205555550550666662205
+55550055555005555555005555500555555005555005555555550055005555555550055550055555555005500555555555555550055005555555555000000005
 __sfx__
 0102000004050080500a0500f05013050000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0112000003744030250a7040a005137441302508744080251b7110a704037440302524615080240a7440a02508744087250a7040c0241674416025167251652527515140240c7440c025220152e015220150a525
@@ -1107,6 +1154,7 @@ __sfx__
 011200002352023520235122351524615177151b7151f715275202752027512275152461523715277152e7152b5202c5212c5202c5202c5202c5222c5222c5222b5202b5202b5222b515225151f5151b51516515
 011200000c0330802508744080250872508044177151b7151b7000f0251174411025246150f0240b7440b0250c0330802508744080250872524715277152e715080242e715080242e715246150f0240c7440c025
 d70800002f0262b02626006270263f0063f0062c0062200632006020061e006280060c0063c006220060c0062c006300060a0063200604006220062a006080062c006000061e0062000638006000063800636006
+790600003461134621346213461100001356010060100601006010060100601006010060100601006010060100601006010060100601006010060100601006010060100601006010060100601006010060100601
 __music__
 00 01000000
 00 01424344
