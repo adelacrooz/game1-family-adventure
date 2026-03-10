@@ -10,14 +10,17 @@ __lua__
 scene="outdoor"
 
 spawns={
- outdoor={x=24,y=40},
+ outdoor={x=24,y=112},
+ outdoor2={x=24,y=112},
  floor1={x=61,y=60},
  floor2={x=61,y=60},
  bedroom={x=61,y=60},
 }
 
 function goto_scene(s)
- if scene=="outdoor" and s~="outdoor" then music(-1) end
+ local from_out=scene=="outdoor" or scene=="outdoor2"
+ local to_out=s=="outdoor" or s=="outdoor2"
+ if from_out and not to_out then music(-1) end
  scene=s
  local sp=spawns[s]
  p.x,p.y=sp.x,sp.y
@@ -28,10 +31,10 @@ function goto_scene(s)
  wall_dir=0
  wall_timer=0
  ghosts={}
- prev_o=false
- prev_x=false
+ prev_o=btn(4)
+ prev_x=btn(5)
  x_tap_timer=0
- if s=="outdoor" then music(0,7) end
+ if to_out then music(0,7) end
 end
 
 -- ===========================
@@ -113,8 +116,17 @@ platforms={
  {860,36,32,8, onetop=true},
 }
 
--- house door trigger (left edge of outdoor level)
-hdoor={x=0,y=104,w=14,h=16}
+-- outdoor door sets: house door + inter-level portal, per scene
+outdoor_doors={
+ outdoor={
+  {x=0, y=104,w=14,h=16,dest="floor1",  lbl="house"},
+  {x=16,y=104,w=14,h=16,dest="outdoor2",lbl="area2"},
+ },
+ outdoor2={
+  {x=0, y=104,w=14,h=16,dest="floor1",  lbl="house"},
+  {x=16,y=104,w=14,h=16,dest="outdoor", lbl="area1"},
+ },
+}
 
 -- ===========================
 -- music notes
@@ -203,7 +215,7 @@ res_nodes={
 }
 
 near_node=nil      -- set each frame in update_outdoor
-near_door=false    -- true when player is touching the house door
+near_portal=nil    -- set to door table when player is near an outdoor door
 res_flash=0        -- pickup feedback countdown
 last_gathered=""   -- type name of last gathered resource
 
@@ -677,7 +689,8 @@ end
 function update_player_anim()
  p.anim_t+=1
  -- indoors treat player as always grounded
- local grnd=scene~="outdoor" or p.on_ground
+ local is_out=scene=="outdoor" or scene=="outdoor2"
+ local grnd=not is_out or p.on_ground
  -- landing flash
  if grnd and not p.prev_on_ground then
   if suppress_lf then suppress_lf=false
@@ -699,25 +712,45 @@ function update_player_anim()
 end
 
 function get_player_spr()
- local grnd=scene~="outdoor" or p.on_ground
+ local is_out=scene=="outdoor" or scene=="outdoor2"
+ local grnd=not is_out or p.on_ground
  local fx=p.facing<0
- if p.land_flash>0 then return 30,p.is_dir_flash~=fx end
- if not grnd then
-  if dash_timer>0 then return 26,fx end
-  if p.vy<0 then return 26,fx else return 28,fx end
+ if scene=="outdoor" then
+  -- 8x8 new sprites
+  if p.land_flash>0 then return 55,p.is_dir_flash~=fx end
+  if not grnd then
+   if dash_timer>0 then return 53,fx end
+   if p.vy<0 then return 53,fx else return 54,fx end
+  end
+  if abs(p.vx)>0.1 then
+   local spd=btn(5) and 4 or 6
+   return 50+flr(p.anim_t/spd)%3,fx
+  end
+  return 48+flr(p.anim_t/20)%2,fx
+ else
+  -- 16x16 old sprites (outdoor2 and all indoor scenes)
+  if p.land_flash>0 then return 30,p.is_dir_flash~=fx end
+  if not grnd then
+   if dash_timer>0 then return 26,fx end
+   if p.vy<0 then return 26,fx else return 28,fx end
+  end
+  if abs(p.vx)>0.1 then
+   local spd=btn(5) and 4 or 6
+   return 20+flr(p.anim_t/spd)%3*2,fx
+  end
+  return 16+flr(p.anim_t/20)%2*2,fx
  end
- if abs(p.vx)>0.1 then
-  local spd=btn(5) and 4 or 6
-  return 20+flr(p.anim_t/spd)%3*2,fx
- end
- return 16+flr(p.anim_t/20)%2*2,fx
 end
 
 function draw_player()
  local s,fx=get_player_spr()
  local flash=not p.can_dash or (dash_timer>0 and dash_is_ground)
  if flash then pal(1,7) end
- spr(s,p.x-5,p.y-8,2,2,fx)
+ if scene=="outdoor" then
+  spr(s,p.x-1,p.y,1,1,fx)
+ else
+  spr(s,p.x-5,p.y-8,2,2,fx)
+ end
  if flash then pal(1,1) end
 end
 
@@ -725,7 +758,7 @@ end
 -- update
 -- ===========================
 function _update()
- if scene=="outdoor" then
+ if scene=="outdoor" or scene=="outdoor2" then
   update_outdoor()
  else
   update_indoor()
@@ -752,8 +785,13 @@ function update_outdoor()
   end
  end
 
- -- house door proximity
- near_door=rect_overlap(p.x,p.y,p.w,p.h,hdoor.x,hdoor.y,hdoor.w,hdoor.h)
+ -- door proximity
+ near_portal=nil
+ for d in all(outdoor_doors[scene]) do
+  if rect_overlap(p.x,p.y,p.w,p.h,d.x,d.y,d.w,d.h) then
+   near_portal=d break
+  end
+ end
 
  if p.on_ground then
   coyote_timer=coyote_frames
@@ -803,8 +841,8 @@ function update_outdoor()
 
  local o_press=btn(4) and not prev_o
  if o_press then
-  if near_door then
-   goto_scene("floor1")
+  if near_portal then
+   goto_scene(near_portal.dest)
    return
   elseif near_critter and inv.net>0 then
    caught[near_critter.typ]=true
@@ -839,9 +877,9 @@ function update_outdoor()
    end
    p.vx=dash_dvx
    p.vy=dash_dvy
-   dash_spr=26
+   dash_spr=scene=="outdoor" and 53 or 26
    sfx(8)
-   add(ghosts,{x=p.x,y=p.y,fx=p.facing<0,t=8,s=26})
+   add(ghosts,{x=p.x,y=p.y,fx=p.facing<0,t=8,s=dash_spr})
    dash_timer=dash_frames
    dash_is_ground=false
    p.can_dash=false
@@ -864,7 +902,7 @@ function update_outdoor()
    if dx==0 then dx=p.facing end
    dash_dvx=dx*dash_spd
    dash_dvy=0
-   dash_spr=26
+   dash_spr=scene=="outdoor" and 53 or 26
    sfx(8)
    p.vx=dash_dvx
    dash_timer=dash_frames
@@ -955,7 +993,7 @@ end
 -- draw
 -- ===========================
 function _draw()
- if scene=="outdoor" then
+ if scene=="outdoor" or scene=="outdoor2" then
   draw_outdoor()
  else
   draw_indoor()
@@ -990,11 +1028,13 @@ function draw_world_bg()
   circfill(n.x+2,by+2,3,n.c)
   pset(n.x+2,by+2,7)
  end
- -- house door
- rectfill(hdoor.x,hdoor.y,hdoor.x+hdoor.w-1,119,9)
- print("house",1,hdoor.y-6,7)
- if near_door then
-  print("o:enter",1,hdoor.y-14,7)
+ -- doors
+ for d in all(outdoor_doors[scene]) do
+  rectfill(d.x,d.y,d.x+d.w-1,119,9)
+  print(d.lbl,d.x+1,d.y-6,7)
+  if near_portal==d then
+   print("o:enter",d.x+1,d.y-14,7)
+  end
  end
 end
 
@@ -1023,7 +1063,11 @@ function draw_outdoor()
   local gc=g.t>4 and 7 or 1
   palt(0,true)
   for c=1,15 do pal(c,gc) end
-  spr(g.s,g.x-5,g.y-8,2,2,g.fx)
+  if scene=="outdoor" then
+   spr(g.s,g.x-1,g.y,1,1,g.fx)
+  else
+   spr(g.s,g.x-5,g.y-8,2,2,g.fx)
+  end
   pal()
   palt(0,false)
   palt(5,true)
@@ -1145,6 +1189,14 @@ d44424440f02d0f00002d0000220d000002d00000dd0200000d20000000002d00f022d0000000000
 5550066666660055555506666666055555500dddddd05555555506666660555555500dddddd0555555550666660555555555506666605555550f00dddddd0055
 555502000002055555550200000205555502200000e05555555502000e055555550ee00000205555555020002055555555555502000205555550550666662205
 55550055555005555555005555500555555005555005555555550055005555555550055550055555555005500555555555555550055005555555555000000005
+51111115511111155111111551111115511111155111111551111115555555550000000000000000000000000000000000000000000000000000000000000000
+511f1115511f111551111f1551111f1551111f1551111f1551111f15511111150000000000000000000000000000000000000000000000000000000000000000
+54f0f0f554f0f0f554fff0f554fff0f554fff0f554fff0f554fff0f5511f11150000000000000000000000000000000000000000000000000000000000000000
+5fefffe55fef8fe554ffff8554ffff8554ffff8554ffff8554ffff8554f0f0f50000000000000000000000000000000000000000000000000000000000000000
+55ffff555dddddd555ffff5555ffff5555ffff5555ffff5555ffff555fff8ff50000000000000000000000000000000000000000000000000000000000000000
+5dddddd5f5dddd5ffdddd555fdddd555fdddd55555ddd55555ddd55555dddddf0000000000000000000000000000000000000000000000000000000000000000
+f5dddd5f55dddd5555ddd55555ddd55555ddd55555fdd55555ddf5555f5dd2550000000000000000000000000000000000000000000000000000000000000000
+55255255552552552255e5555525e555ee55255552525555555252555555ddee0000000000000000000000000000000000000000000000000000000000000000
 __sfx__
 0102000004050080500a0500f05013050000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0112000003744030250a7040a005137441302508744080251b7110a704037440302524615080240a7440a02508744087250a7040c0241674416025167251652527515140240c7440c025220152e015220150a525
