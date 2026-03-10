@@ -31,6 +31,7 @@ function goto_scene(s)
  wall_dir=0
  wall_timer=0
  side_jump=false
+ is_slide_dash=false
  dir_change_window=0
  dir_change_sjd=0
  prev_hdir=0
@@ -54,6 +55,7 @@ dash_dvx=0
 dash_dvy=0
 dash_spr=6
 dash_is_ground=false
+is_slide_dash=false
 suppress_lf=false
 wall_dir=0          -- -1=left wall, 1=right wall, 0=none
 wall_timer=0        -- frames of grace after touching wall
@@ -735,8 +737,9 @@ function get_player_spr()
  if scene=="outdoor" then
   -- 8x8 new sprites
   if p.land_flash>0 and p.is_dir_flash then return 55,fx end
+  if dash_timer>0 and is_slide_dash then return dash_spr,fx end
   if not grnd then
-   if dash_timer>0 then return 53,fx end
+   if dash_timer>0 then return dash_spr,fx end
    if side_jump then
     if p.vy<-1 then return 56,fx
     elseif p.vy<=1 then return 57,fx
@@ -752,8 +755,9 @@ function get_player_spr()
  else
   -- 16x16 old sprites (outdoor2 and all indoor scenes)
   if p.land_flash>0 and p.is_dir_flash then return 30,fx end
+  if dash_timer>0 and is_slide_dash then return dash_spr,fx end
   if not grnd then
-   if dash_timer>0 then return 26,fx end
+   if dash_timer>0 then return dash_spr,fx end
    if side_jump then
     if p.vy<-1 then return 64,fx
     elseif p.vy<=1 then return 66,fx
@@ -891,6 +895,19 @@ function update_outdoor()
    inv[near_node.typ]+=1
    last_gathered=near_node.typ
    res_flash=30
+  elseif p.on_ground and btn(3) then
+   -- slide dash: hold down + O (down-left/right also ok)
+   local dx=btn(0) and -1 or (btn(1) and 1 or p.facing)
+   dash_dvx=dx*dash_spd
+   dash_dvy=0
+   dash_spr=scene=="outdoor" and 55 or 30
+   sfx(8)
+   p.vx=dash_dvx
+   p.vy=0
+   add(ghosts,{x=p.x,y=p.y,fx=p.facing<0,t=8,s=dash_spr})
+   dash_timer=dash_frames
+   dash_is_ground=true
+   is_slide_dash=true
   elseif not p.on_ground and wall_timer>0 then
    -- wall jump: kick away from wall (hold X for extra horizontal kick)
    local wj_boost=btn(5) and 1.4 or 1.0
@@ -924,6 +941,7 @@ function update_outdoor()
    dash_is_ground=false
    p.can_dash=false
    side_jump=false
+   is_slide_dash=false
   else
    -- side jump: press O within the dir-change animation window
    if dir_change_window>0 and (p.on_ground or coyote_timer>0) then
@@ -961,6 +979,7 @@ function update_outdoor()
    p.vx=dash_dvx
    dash_timer=dash_frames
    dash_is_ground=true
+   is_slide_dash=false
   else
    x_tap_timer=double_tap_frames
   end
