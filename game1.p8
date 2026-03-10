@@ -923,6 +923,7 @@ function update_outdoor()
    dash_timer=dash_frames
    dash_is_ground=false
    p.can_dash=false
+   side_jump=false
   else
    -- side jump: press O within the dir-change animation window
    if dir_change_window>0 and (p.on_ground or coyote_timer>0) then
