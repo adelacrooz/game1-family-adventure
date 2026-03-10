@@ -30,6 +30,10 @@ function goto_scene(s)
  dash_timer=0
  wall_dir=0
  wall_timer=0
+ side_jump=false
+ dir_change_window=0
+ dir_change_sjd=0
+ prev_hdir=0
  ghosts={}
  prev_o=btn(4)
  prev_x=btn(5)
@@ -54,6 +58,10 @@ suppress_lf=false
 wall_dir=0          -- -1=left wall, 1=right wall, 0=none
 wall_timer=0        -- frames of grace after touching wall
 on_wall=false       -- true while actively pressed against a wall
+side_jump=false     -- true while in a side-jump arc
+dir_change_window=0 -- frames remaining in side-jump trigger window
+dir_change_sjd=0    -- queued direction for side jump (-1 or 1)
+prev_hdir=0         -- horizontal input last frame (-1,0,1)
 ghosts={}
 prev_o=false
 prev_x=false
@@ -74,6 +82,8 @@ double_tap_frames=10
 wall_jump_spd=2.8   -- horizontal kick when wall jumping
 wall_coyote=8       -- grace frames after leaving a wall
 wall_slide_max=0.6  -- max fall speed while sliding a wall
+side_jump_force=-6.4 -- higher arc than normal jump_force
+side_jump_hspd=2.2   -- max horizontal speed during side jump
 
 -- indoor speed
 indoor_spd=1.5
@@ -83,14 +93,14 @@ indoor_spd=1.5
 -- ===========================
 level_width=960
 platforms={
- -- ground split around pit (gap x=620-668, 48px wide = 8x player w)
+ -- ground split around pit (gap x=620-692, 72px wide = 12x player w)
  {0,120,620,16},
- {668,120,300,16},
+ {692,120,276,16},
  -- pit side walls (solid, below ground plate, y=136-380)
  {618,136,2,244},
- {668,136,2,244},
+ {692,136,2,244},
  -- pit floor (solid, 260px below ground)
- {620,380,48,8},
+ {620,380,72,8},
  -- floating platforms (onetop: pass through from below, land on top)
  {48,96,48,8,  onetop=true},
  {128,72,48,8, onetop=true},
@@ -697,18 +707,25 @@ function update_player_anim()
   else p.land_flash=10 p.is_dir_flash=false
   end
  end
- -- direction-change flash (while running)
- if grnd and p.land_flash<=0 and btn(5)
-  and abs(p.prev_vx)>0.05
-  and (p.vx>0)~=(p.prev_vx>0) then
+ -- direction-change flash: fires on the first frame the player
+ -- presses the opposite direction while sprinting at speed
+ local hdir=btn(0) and -1 or (btn(1) and 1 or 0)
+ if grnd and btn(5)
+  and abs(p.vx)>1.0
+  and hdir~=0 and hdir~=prev_hdir
+  and (hdir>0)~=(p.vx>0) then
   if suppress_lf then suppress_lf=false
-  else p.land_flash=8 p.is_dir_flash=true sfx(7)
+  else
+   p.land_flash=8 p.is_dir_flash=true sfx(7)
+   dir_change_window=8
+   dir_change_sjd=p.vx>0 and -1 or 1
   end
  end
  if p.land_flash>0 then p.land_flash-=1 end
  if p.vx>0.1 then p.facing=1 elseif p.vx<-0.1 then p.facing=-1 end
  p.prev_on_ground=grnd
  p.prev_vx=p.vx
+ prev_hdir=hdir
 end
 
 function get_player_spr()
@@ -717,9 +734,14 @@ function get_player_spr()
  local fx=p.facing<0
  if scene=="outdoor" then
   -- 8x8 new sprites
-  if p.land_flash>0 then return 55,p.is_dir_flash~=fx end
+  if p.land_flash>0 and p.is_dir_flash then return 55,fx end
   if not grnd then
    if dash_timer>0 then return 53,fx end
+   if side_jump then
+    if p.vy<-1 then return 56,fx
+    elseif p.vy<=1 then return 57,fx
+    else return 58,fx end
+   end
    if p.vy<0 then return 53,fx else return 54,fx end
   end
   if abs(p.vx)>0.1 then
@@ -729,9 +751,14 @@ function get_player_spr()
   return 48+flr(p.anim_t/20)%2,fx
  else
   -- 16x16 old sprites (outdoor2 and all indoor scenes)
-  if p.land_flash>0 then return 30,p.is_dir_flash~=fx end
+  if p.land_flash>0 and p.is_dir_flash then return 30,fx end
   if not grnd then
    if dash_timer>0 then return 26,fx end
+   if side_jump then
+    if p.vy<-1 then return 64,fx
+    elseif p.vy<=1 then return 66,fx
+    else return 68,fx end
+   end
    if p.vy<0 then return 26,fx else return 28,fx end
   end
   if abs(p.vx)>0.1 then
@@ -744,14 +771,16 @@ end
 
 function draw_player()
  local s,fx=get_player_spr()
- local flash=not p.can_dash or (dash_timer>0 and dash_is_ground)
- if flash then pal(1,7) end
+ local dashing=dash_timer>0
+ local post_air=not p.can_dash and dash_timer==0
+ if dashing then pal(0,7) pal(1,7)
+ elseif post_air then pal(1,7) end
  if scene=="outdoor" then
   spr(s,p.x-1,p.y,1,1,fx)
  else
   spr(s,p.x-5,p.y-8,2,2,fx)
  end
- if flash then pal(1,1) end
+ if dashing or post_air then pal(0,0) pal(1,1) end
 end
 
 -- ===========================
@@ -798,22 +827,30 @@ function update_outdoor()
   p.can_dash=true
   wall_dir=0
   wall_timer=0
+  side_jump=false
  else
   coyote_timer=max(0,coyote_timer-1)
   wall_timer=max(0,wall_timer-1)
  end
  if jump_buffer>0 then jump_buffer-=1 end
+ if dir_change_window>0 then dir_change_window-=1 end
 
  if dash_timer>0 then
-  dash_timer-=1
-  p.vx=dash_dvx
-  p.vy=dash_dvy
-  if dash_timer==0 then
-   p.vy=p.vy*0.3
-   if dash_is_ground then suppress_lf=true end
-  end
-  if dash_timer>0 and dash_timer%2==0 and not p.on_ground then
-   add(ghosts,{x=p.x,y=p.y,fx=p.facing<0,t=8,s=dash_spr})
+  -- air cancel: re-press o during a mid-air dash kills momentum
+  if not dash_is_ground and btn(4) and not prev_o then
+   p.vx=0 p.vy=0
+   dash_timer=0
+  else
+   dash_timer-=1
+   p.vx=dash_dvx
+   p.vy=dash_dvy
+   if dash_timer==0 then
+    p.vy=p.vy*0.3
+    if dash_is_ground then suppress_lf=true end
+   end
+   if dash_timer>0 and dash_timer%2==0 and not p.on_ground then
+    add(ghosts,{x=p.x,y=p.y,fx=p.facing<0,t=8,s=dash_spr})
+   end
   end
  else
   if p.on_ground then p.air_sprint=btn(5) end
@@ -836,6 +873,7 @@ function update_outdoor()
    if abs(p.vx)<0.1 then p.vx=0 end
   end
   local fall_cap=on_wall and p.vy>0 and wall_slide_max or max_fall
+  if side_jump then p.vx=mid(-side_jump_hspd,p.vx,side_jump_hspd) end
   p.vy=min(p.vy+gravity,fall_cap)
  end
 
@@ -854,9 +892,11 @@ function update_outdoor()
    last_gathered=near_node.typ
    res_flash=30
   elseif not p.on_ground and wall_timer>0 then
-   -- wall jump: kick away from wall
-   p.vx=-wall_dir*wall_jump_spd
+   -- wall jump: kick away from wall (hold X for extra horizontal kick)
+   local wj_boost=btn(5) and 1.4 or 1.0
+   p.vx=-wall_dir*wall_jump_spd*wj_boost
    p.vy=jump_force
+   p.air_sprint=false  -- clear sprint flag so boost doesn't carry into air movement
    wall_timer=0
    coyote_timer=0
    jump_buffer=0
@@ -884,7 +924,20 @@ function update_outdoor()
    dash_is_ground=false
    p.can_dash=false
   else
-   jump_buffer=jump_buffer_frames
+   -- side jump: press O within the dir-change animation window
+   if dir_change_window>0 and (p.on_ground or coyote_timer>0) then
+    sfx(0)
+    p.vy=side_jump_force
+    p.vx=dir_change_sjd*side_jump_hspd
+    p.on_ground=false
+    coyote_timer=0
+    jump_buffer=0
+    dash_timer=0
+    side_jump=true
+    dir_change_window=0
+   else
+    jump_buffer=jump_buffer_frames
+   end
   end
  end
  if jump_buffer>0 and (p.on_ground or coyote_timer>0) then
@@ -1006,11 +1059,11 @@ function draw_world_bg()
  -- underground dirt layer (visible when camera scrolls into pit)
  rectfill(0,120,level_width,390,4)
  -- pit shaft interior (black opening)
- rectfill(620,120,667,388,0)
+ rectfill(620,120,691,388,0)
  -- tile sprite 0 along pit perimeter (left wall, right wall, floor)
  for ty=120,380,8 do spr(0,610,ty) end  -- left inner strip
- for ty=120,380,8 do spr(0,668,ty) end  -- right inner strip
- for tx=620,660,8 do spr(0,tx,388) end  -- bottom row
+ for ty=120,380,8 do spr(0,692,ty) end  -- right inner strip
+ for tx=620,684,8 do spr(0,tx,388) end  -- bottom row
  -- platforms
  for pl in all(platforms) do
   rectfill(pl[1],pl[2],pl[1]+pl[3]-1,pl[2]+pl[4]-1,3)
@@ -1189,14 +1242,30 @@ d44424440f02d0f00002d0000220d000002d00000dd0200000d20000000002d00f022d0000000000
 5550066666660055555506666666055555500dddddd05555555506666660555555500dddddd0555555550666660555555555506666605555550f00dddddd0055
 555502000002055555550200000205555502200000e05555555502000e055555550ee00000205555555020002055555555555502000205555550550666662205
 55550055555005555555005555500555555005555005555555550055005555555550055550055555555005500555555555555550055005555555555000000005
-51111115511111155111111551111115511111155111111551111115555555550000000000000000000000000000000000000000000000000000000000000000
-511f1115511f111551111f1551111f1551111f1551111f1551111f15511111150000000000000000000000000000000000000000000000000000000000000000
-54f0f0f554f0f0f554fff0f554fff0f554fff0f554fff0f554fff0f5511f11150000000000000000000000000000000000000000000000000000000000000000
-5fefffe55fef8fe554ffff8554ffff8554ffff8554ffff8554ffff8554f0f0f50000000000000000000000000000000000000000000000000000000000000000
-55ffff555dddddd555ffff5555ffff5555ffff5555ffff5555ffff555fff8ff50000000000000000000000000000000000000000000000000000000000000000
-5dddddd5f5dddd5ffdddd555fdddd555fdddd55555ddd55555ddd55555dddddf0000000000000000000000000000000000000000000000000000000000000000
-f5dddd5f55dddd5555ddd55555ddd55555ddd55555fdd55555ddf5555f5dd2550000000000000000000000000000000000000000000000000000000000000000
-55255255552552552255e5555525e555ee55255552525555555252555555ddee0000000000000000000000000000000000000000000000000000000000000000
+51111115511111155111111551111115511111155111111551111115555555555555555552555525555555550000000000000000000000000000000000000000
+511f1115511f111551111f1551111f1551111f1551111f1551111f15511111155555ff1155dddd5511ff55550000000000000000000000000000000000000000
+5ff0f0f55ff0f0f554fff0f554fff0f554fff0f554fff0f554fff0f5511f1115555ff011fddddddf110ff5550000000000000000000000000000000000000000
+5fefffe55fef8fe55fffff855fffff855fffff855fffff8555ffff855ff0f0f55ddf8f1155ffff5511f8fdd50000000000000000000000000000000000000000
+55ffff555dddddd555ffff5555ffff5555ffff5555ffff5555ffff555fff8ff52ddff0f15fff8ff51f0ffdd20000000000000000000000000000000000000000
+5dddddd5f5dddd5ffdddd555fdddd555fdddd55555ddd55555ddd55555dddddf5ddfff115ff0f0f511fffdd50000000000000000000000000000000000000000
+f5dddd5f55dddd5555ddd55555ddd55555ddd55555fdd55555ddf5555f5dd25525d5ff11511f111511ff5d520000000000000000000000000000000000000000
+55255255552552552255e5555525e555ee55255552525555555252555555ddee55f555555111111555555f550000000000000000000000000000000000000000
+55555555555555555500555555555005555555555555555500000000000000000000000000000000000000000000000000000000000000000000000000000000
+55555555555555555502000000000205555555555555555500000000000000000000000000000000000000000000000000000000000000000000000000000000
+55555550000000555550666666666055550000000555555500000000000000000000000000000000000000000000000000000000000000000000000000000000
+5555550eff1111055550ddddddddd055501111ffe055555500000000000000000000000000000000000000000000000000000000000000000000000000000000
+550000ff00111110550ddddddddddd0501111100ff00005500000000000000000000000000000000000000000000000000000000000000000000000000000000
+506dddffff11111050fdddddddddddf0011111ffffddd60500000000000000000000000000000000000000000000000000000000000000000000000000000000
+026dddf8ff11111055000fffffff0005011111ff8fddd62000000000000000000000000000000000000000000000000000000000000000000000000000000000
+006dddffff1111105550effff8ffe055011111ffffddd60000000000000000000000000000000000000000000000000000000000000000000000000000000000
+506dddffff1111105504ff0ffff0f055011111ffffddd60500000000000000000000000000000000000000000000000000000000000000000000000000000000
+506dddff00f111105504ff0ffff0f05501111f00ffddd60500000000000000000000000000000000000000000000000000000000000000000000000000000000
+506dddfffff1111055011ff11111105501111fffffddd60500000000000000000000000000000000000000000000000000000000000000000000000000000000
+506ddd0eff1111055501111111111055501111ffe0ddd60500000000000000000000000000000000000000000000000000000000000000000000000000000000
+0200dd004411105555011111111110555501114400dd002000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00550f050000055555501111111110555550000050f0550000000000000000000000000000000000000000000000000000000000000000000000000000000000
+55550f055555555555550111111105555555555550f0555500000000000000000000000000000000000000000000000000000000000000000000000000000000
+55555055555555555555500000005555555555555505555500000000000000000000000000000000000000000000000000000000000000000000000000000000
 __sfx__
 0102000004050080500a0500f05013050000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0112000003744030250a7040a005137441302508744080251b7110a704037440302524615080240a7440a02508744087250a7040c0241674416025167251652527515140240c7440c025220152e015220150a525
