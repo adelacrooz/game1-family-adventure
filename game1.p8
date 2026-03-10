@@ -23,6 +23,12 @@ function goto_scene(s)
  p.x,p.y=sp.x,sp.y
  p.vx,p.vy=0,0
  p.on_ground=false
+ p.can_dash=true
+ dash_timer=0
+ ghosts={}
+ prev_o=false
+ prev_x=false
+ x_tap_timer=0
  if s=="outdoor" then music(0,7) end
 end
 
@@ -31,19 +37,31 @@ end
 -- ===========================
 p={x=24,y=40,vx=0,vy=0,w=6,h=8,on_ground=false,
    anim_t=0,facing=1,land_flash=0,is_dir_flash=false,
-   prev_on_ground=false,prev_vx=0,air_sprint=false}
+   prev_on_ground=false,prev_vx=0,air_sprint=false,can_dash=true}
 coyote_timer=0
 jump_buffer=0
+dash_timer=0
+dash_dvx=0
+dash_dvy=0
+dash_spr=6
+suppress_lf=false
+ghosts={}
+prev_o=false
+prev_x=false
+x_tap_timer=0
 
 -- outdoor physics constants
 gravity=0.35
 max_fall=4
-jump_force=-7
+jump_force=-4.5
 move_speed=2.2
 move_accel=0.4
 ground_friction=0.82
 coyote_frames=6
 jump_buffer_frames=5
+dash_spd=6.5
+dash_frames=6
+double_tap_frames=10
 
 -- indoor speed
 indoor_spd=1.5
@@ -53,7 +71,7 @@ indoor_spd=1.5
 -- ===========================
 level_width=960
 platforms={
- {0,120,level_width,16},  -- ground
+ {0,120,level_width+8,16},  -- ground (extended 8px past edge to cover wrap seam)
  {48,96,48,8},
  {128,72,48,8},
  {208,96,48,8},
@@ -168,6 +186,7 @@ res_nodes={
 }
 
 near_node=nil      -- set each frame in update_outdoor
+near_door=false    -- true when player is touching the house door
 res_flash=0        -- pickup feedback countdown
 last_gathered=""   -- type name of last gathered resource
 
@@ -619,6 +638,7 @@ function do_jump()
  p.on_ground=false
  coyote_timer=0
  jump_buffer=0
+ dash_timer=0
 end
 
 -- ===========================
@@ -630,8 +650,9 @@ function update_player_anim()
  local grnd=scene~="outdoor" or p.on_ground
  -- landing flash
  if grnd and not p.prev_on_ground then
-  p.land_flash=10
-  p.is_dir_flash=false
+  if suppress_lf then suppress_lf=false
+  else p.land_flash=10 p.is_dir_flash=false
+  end
  end
  -- direction-change flash (while running)
  if grnd and p.land_flash<=0 and btn(5)
@@ -652,6 +673,7 @@ function get_player_spr()
  local fx=p.facing<0
  if p.land_flash>0 then return 8,p.is_dir_flash~=fx end
  if not grnd then
+  if dash_timer>0 then return 6,fx end
   if p.vy<0 then return 6,fx else return 7,fx end
  end
  if abs(p.vx)>0.1 then
@@ -697,26 +719,57 @@ function update_outdoor()
   end
  end
 
+ -- house door proximity
+ near_door=rect_overlap(p.x,p.y,p.w,p.h,hdoor.x,hdoor.y,hdoor.w,hdoor.h)
+
  if p.on_ground then
   coyote_timer=coyote_frames
+  p.can_dash=true
  else
   coyote_timer=max(0,coyote_timer-1)
  end
  if jump_buffer>0 then jump_buffer-=1 end
 
- if p.on_ground then p.air_sprint=btn(5) end
- local spd=p.air_sprint and move_speed*1.7 or move_speed
- if btn(0) then
-  p.vx=max(-spd,p.vx-move_accel)
- elseif btn(1) then
-  p.vx=min(spd,p.vx+move_accel)
- elseif p.on_ground then
-  p.vx*=ground_friction
-  if abs(p.vx)<0.1 then p.vx=0 end
+ if dash_timer>0 then
+  dash_timer-=1
+  p.vx=dash_dvx
+  p.vy=dash_dvy
+  if dash_timer==0 then
+   p.vy=p.vy*0.3
+   if dash_spr==3 then suppress_lf=true end
+  end
+  if dash_timer>0 and dash_timer%2==0 and not p.on_ground then
+   add(ghosts,{x=p.x,y=p.y,fx=p.facing<0,t=8,s=dash_spr})
+  end
+ else
+  if p.on_ground then p.air_sprint=btn(5) end
+  local spd=p.air_sprint and move_speed*1.7 or move_speed
+  local sprint_spd=move_speed*1.7
+  if btn(0) then
+   if p.vx<-sprint_spd and btn(5) then
+    -- post-dash coast: hold X to maintain speed
+   elseif p.vx>-spd then p.vx=max(-spd,p.vx-move_accel)
+   else p.vx=max(-spd,p.vx+move_accel)
+   end
+  elseif btn(1) then
+   if p.vx>sprint_spd and btn(5) then
+    -- post-dash coast: hold X to maintain speed
+   elseif p.vx<spd then p.vx=min(spd,p.vx+move_accel)
+   else p.vx=max(spd,p.vx-move_accel)
+   end
+  elseif p.on_ground then
+   p.vx*=ground_friction
+   if abs(p.vx)<0.1 then p.vx=0 end
+  end
+  p.vy=min(p.vy+gravity,max_fall)
  end
 
- if btnp(4) then
-  if near_critter and inv.net>0 then
+ local o_press=btn(4) and not prev_o
+ if o_press then
+  if near_door then
+   goto_scene("floor1")
+   return
+  elseif near_critter and inv.net>0 then
    caught[near_critter.typ]=true
    dset(critter_slot[near_critter.typ],1)
    del(critters,near_critter)
@@ -725,6 +778,26 @@ function update_outdoor()
    inv[near_node.typ]+=1
    last_gathered=near_node.typ
    res_flash=30
+  elseif not p.on_ground and p.can_dash then
+   -- air dash: press o while airborne (once per jump)
+   local dx=0
+   if btn(0) then dx=-1 elseif btn(1) then dx=1 end
+   local dy=0
+   if btn(2) then dy=-1 elseif btn(3) then dy=1 end
+   if dx==0 and dy==0 then dx=p.facing end
+   if dx~=0 and dy~=0 then
+    dash_dvx=dx*dash_spd*0.71
+    dash_dvy=dy*dash_spd*0.71
+   else
+    dash_dvx=dx*dash_spd
+    dash_dvy=dy*dash_spd
+   end
+   p.vx=dash_dvx
+   p.vy=dash_dvy
+   dash_spr=6
+   add(ghosts,{x=p.x,y=p.y,fx=p.facing<0,t=8,s=6})
+   dash_timer=dash_frames
+   p.can_dash=false
   else
    jump_buffer=jump_buffer_frames
   end
@@ -733,20 +806,42 @@ function update_outdoor()
   do_jump()
  end
 
- p.vy=min(p.vy+gravity,max_fall)
+ -- ground dash: double-tap x
+ local x_press=btn(5) and not prev_x
+ if x_tap_timer>0 then x_tap_timer-=1 end
+ if x_press then
+  if x_tap_timer>0 and p.on_ground then
+   x_tap_timer=0
+   local dx=0
+   if btn(0) then dx=-1 elseif btn(1) then dx=1 end
+   if dx==0 then dx=p.facing end
+   dash_dvx=dx*dash_spd
+   dash_dvy=0
+   dash_spr=3
+   p.vx=dash_dvx
+   dash_timer=dash_frames
+  else
+   x_tap_timer=double_tap_frames
+  end
+ end
 
  resolve_x_out()
  resolve_y_out()
 
  if p.on_ground and jump_buffer>0 then do_jump() end
 
- p.x=mid(0,p.x,level_width-p.w)
+ -- wrap player across map edges (at exact boundary for cam continuity)
+ if p.x >= level_width then p.x-=level_width
+ elseif p.x < 0 then p.x+=level_width
+ end
  collect_notes()
  update_critters()
-
- if rect_overlap(p.x,p.y,p.w,p.h,hdoor.x,hdoor.y,hdoor.w,hdoor.h) then
-  goto_scene("floor1")
+ for g in all(ghosts) do
+  g.t-=1
+  if g.t<=0 then del(ghosts,g) end
  end
+ prev_o=btn(4)
+ prev_x=btn(5)
  update_player_anim()
 end
 
@@ -817,13 +912,9 @@ function _draw()
  end
 end
 
-function draw_outdoor()
- cls(1)
- local cam_x=mid(0,p.x-64,level_width-128)
- camera(cam_x,0)
-
+-- draws the world background (called twice for seamless looping)
+function draw_world_bg()
  rectfill(0,0,level_width,120,12)
-
  -- mountains
  rectfill(560,70,680,120,5)
  rectfill(578,50,662,70,5)
@@ -835,43 +926,64 @@ function draw_outdoor()
  rectfill(742,36,798,56,5)
  rectfill(760,20,780,36,5)
  rectfill(759,17,781,23,7)
-
  -- lake
  rectfill(10,96,390,120,1)
  rectfill(10,96,390,99,12)
  line(20,106,380,106,13)
  line(20,113,380,113,13)
-
  -- platforms
  for pl in all(platforms) do
   rectfill(pl[1],pl[2],pl[1]+pl[3]-1,pl[2]+pl[4]-1,3)
   rect(pl[1],pl[2],pl[1]+pl[3]-1,pl[2]+pl[4]-1,7)
  end
-
- -- critters
  draw_critters()
-
  -- resource nodes
  for rn in all(res_nodes) do
   circfill(rn.x+3,rn.y+3,5,rn.col)
   pset(rn.x+3,rn.y+3,7)
  end
-
- -- music notes (bobbing circles)
+ -- music notes (bobbing)
  for n in all(notes) do
   local by=flr(n.y+sin(note_t/60+n.id*0.13)*2)
   circfill(n.x+2,by+2,3,n.c)
-  pset(n.x+2,by+2,7)  -- white center
+  pset(n.x+2,by+2,7)
  end
-
  -- house door
  rectfill(hdoor.x,hdoor.y,hdoor.x+hdoor.w-1,119,9)
  print("house",1,hdoor.y-6,7)
+ if near_door then
+  print("o:enter",1,hdoor.y-14,7)
+ end
+end
 
- -- player
+function draw_outdoor()
+ cls(1)
+ local cam_x=p.x-64  -- unclamped for seamless loop
+
+ -- primary world draw
+ camera(cam_x,0)
+ draw_world_bg()
+
+ -- secondary draw to show the far end of the world near each edge
+ if cam_x>level_width-128 then
+  camera(cam_x-level_width,0)
+  draw_world_bg()
+ elseif cam_x<0 then
+  camera(cam_x+level_width,0)
+  draw_world_bg()
+ end
+
+ -- dash ghosts and player (primary world space)
+ camera(cam_x,0)
+ for g in all(ghosts) do
+  local gc=g.t>4 and 7 or 1
+  for c=1,15 do pal(c,gc) end
+  spr(g.s,g.x-1,g.y,1,1,g.fx)
+  pal()
+ end
  draw_player()
 
- -- capture prompt (world space, above critter)
+ -- prompts (world space)
  if near_critter then
   if inv.net>0 then
    print("o:catch",near_critter.x-6,near_critter.y-10,7)
@@ -879,14 +991,12 @@ function draw_outdoor()
    print("need net",near_critter.x-8,near_critter.y-10,8)
   end
  end
-
- -- gather prompt (drawn in world space, above player)
  if near_node then
   print("o:"..near_node.typ,p.x-10,p.y-10,7)
  end
 
  camera()
- -- note HUD: colored dot + count
+ -- note HUD
  circfill(4,4,2,8)  print(inv_notes.r.."/8",9, 2,8)
  circfill(4,11,2,12) print(inv_notes.b.."/8",9, 9,12)
  circfill(4,18,2,10) print(inv_notes.y.."/8",9,16,10)
@@ -972,6 +1082,22 @@ __gfx__
 00000000002222000f0220f00002200000022000000220000f0220000000220f002222f000000000000000000000000000000000000000000000000000000000
 000000000f02d0f00002d0000220d000002d00000dd0200000d20000000002d00f022d0000000000000000000000000000000000000000000000000000000000
 0000000000200d0000200d000000d000002d0000000020000d2000000000002d000022dd00000000000000000000000000000000000000000000000000000000
+00000555555500000000055555550000000000000000000000000555555500000000000000000000000005555555000000000555555500000000055555550000
+00005111111150000000511111115000000005555555000000005111111150000000055555550000000051111111500000005111111150000000511111115000
+00051111111115000005111111111500000051111111500000051111111115000000511111115000000511111111150000051111111115000005111111111500
+00511111111115000051111111111500000511111111150000511111111115000005111111111500005111111111150000511111111115000051111111111500
+00511111111115000051111111111500005111111111150000511111111115000051111111111500005111111111150000511111111115000051111111111500
+00511ff11111150000511ff1111115000051111111111500005111111ff115000051111111111500005111111ff11500005111111ff1150000511ff111111500
+0054ff5ffff5f5000054ff5ffff5f500005111111ff115000054ffffff5ff500005111111ff115000054ffffff5ff5000054ffffff5ff5000054ff5fff5ff500
+0054ff5ffff5f5000054ff5ffff5f5000054ffffff5ff5000054ffffff5ff5000054ffffff5ff5000054ffffff5ff5000054ffffff5ff5000054ff5fff5ff500
+0005efffffffe5000005effff8ffe5000054ffffff5ff5000005ffffffff85000054ffffff5ff5000005ffffffff85000005ffffffff85000005efff8fffe500
+00005fffffff50000005ddddddddd5000005ffffffff850000555fffffff50000005ffffffff850000005fffffff500000005fffffff500000005fffffff5550
+0005ddddddddd500005fdddddddddf5000555fffffff500005ffddddddd5000000555fffffff500000005dddddd5000000005dddddd5000000005ddddddddff5
+005fdddddddddf50005ffdddddddff5005ffddddddd500000055ddddddd5000005ffddddddd5000000005dfdddd5000000005ddddfd500000005fdddddddd550
+005ffdddddddff5000055ddddddd55000055ddddddd5000000005dddddd500000055ddddddd5000000005fddddd5000000005dddddf50000005f55dddddd5500
+0005566666665500000056666666500000055dddddd50000000056666665000000055dddddd50000000056666650000000000566666500000005005666662250
+00005255555250000000525555525000005225555525000000005255552500000052255555250000000525552500000000000052555250000000000555555550
+00005500000550000000550000055000000550000550000000005500055000000005500005500000000550055000000000000005500550000000000000000000
 __sfx__
 0102000004050080500a0500f05013050000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0112000003744030250a7040a005137441302508744080251b7110a704037440302524615080240a7440a02508744087250a7040c0241674416025167251652527515140240c7440c025220152e015220150a525
