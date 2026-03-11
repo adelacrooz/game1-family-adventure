@@ -38,7 +38,11 @@ function goto_scene(s)
  ghosts={}
  prev_o=btn(4)
  prev_x=btn(5)
+ prev_left=btn(0)
+ prev_right=btn(1)
  x_tap_timer=0
+ left_tap_timer=0
+ right_tap_timer=0
  if to_out then music(0,7) end
 end
 
@@ -67,7 +71,11 @@ prev_hdir=0         -- horizontal input last frame (-1,0,1)
 ghosts={}
 prev_o=false
 prev_x=false
+prev_left=false
+prev_right=false
 x_tap_timer=0
+left_tap_timer=0
+right_tap_timer=0
 
 -- outdoor physics constants
 gravity=0.35
@@ -985,6 +993,30 @@ function update_outdoor()
   end
  end
 
+ -- ground dash: double-tap left/right
+ local left_press=btn(0) and not prev_left
+ local right_press=btn(1) and not prev_right
+ if left_tap_timer>0 then left_tap_timer-=1 end
+ if right_tap_timer>0 then right_tap_timer-=1 end
+ if left_press then
+  if left_tap_timer>0 and p.on_ground and dash_timer==0 then
+   left_tap_timer=0
+   dash_dvx=-dash_spd dash_dvy=0
+   dash_spr=scene=="outdoor" and 53 or 26
+   sfx(8) p.vx=dash_dvx
+   dash_timer=dash_frames dash_is_ground=true is_slide_dash=false
+  else left_tap_timer=double_tap_frames end
+ end
+ if right_press then
+  if right_tap_timer>0 and p.on_ground and dash_timer==0 then
+   right_tap_timer=0
+   dash_dvx=dash_spd dash_dvy=0
+   dash_spr=scene=="outdoor" and 53 or 26
+   sfx(8) p.vx=dash_dvx
+   dash_timer=dash_frames dash_is_ground=true is_slide_dash=false
+  else right_tap_timer=double_tap_frames end
+ end
+
  on_wall=false       -- reset before resolve so gravity read prev-frame value
  resolve_x_out()
  resolve_y_out()
@@ -1003,6 +1035,8 @@ function update_outdoor()
  end
  prev_o=btn(4)
  prev_x=btn(5)
+ prev_left=btn(0)
+ prev_right=btn(1)
  update_player_anim()
 end
 

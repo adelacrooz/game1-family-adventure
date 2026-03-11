@@ -203,3 +203,103 @@ cartdata("yourname_gamename_v1")
 ```
 
 The `_v1` suffix lets you introduce a clean save slate in a future version if the slot layout ever needs a breaking change.
+
+---
+
+## 8. Map Tool vs. Code-Generated Maps
+
+### The map tool
+
+PICO-8's built-in map editor gives you a 128×64 grid of tiles (1024×512 px total). Each tile is 8×8 px. You render a region with one call and read tile data with two:
+
+```lua
+map(cel_x, cel_y, scr_x, scr_y, cel_w, cel_h)  -- draw a region of the map
+mget(tx, ty)                                      -- get the tile ID at map cell (tx,ty)
+fget(tile_id, flag_n)                             -- check if flag N is set on a tile
+```
+
+For collision, set **flag 0** on solid tiles in the sprite editor's Flags tab, then check it at runtime:
+
+```lua
+-- is the tile at pixel position (px, py) solid?
+local tx = px \ 8   -- integer divide to get tile column
+local ty = py \ 8
+if fget(mget(tx, ty), 0) then
+  -- solid
+end
+```
+
+### Map layout for this game
+
+The 128×64 map splits naturally into two halves:
+
+| Region | Rows | Use |
+|--------|------|-----|
+| Top half | 0–31 | Outdoor level (120 cols × 32 rows = 960×256 px) |
+| Bottom half | 32–63 | Indoor rooms (Floor 1, Floor 2, Bedroom) |
+
+### Map tool vs. alternatives — comparison
+
+| Approach | Token cost | Editability | Best for |
+|----------|-----------|-------------|----------|
+| **Map tool** (recommended) | Near zero — data lives in `__map__` section, outside token budget | Visual editor, easy to iterate | Designed levels with specific layouts |
+| **Static arrays** (current `platforms`) | High — every rect is tokens | Tedious to change | Prototyping only; doesn't scale |
+| **Procedural (runtime)** | Medium | None — layout changes every run | Roguelikes, infinite runners |
+
+**Use the map tool for all primary terrain.** The current `platforms` array is prototype scaffolding — it will be replaced once terrain tiles are drawn and the outdoor map is laid out.
+
+### Procedural generation on top of the map
+
+Procedural code works well for *decoration* layered on top of a designed map — it never replaces the authored terrain:
+
+- **Scatter decorative tiles** (flowers, rocks, bushes) at `_init` on empty ground-adjacent cells using seeded RNG
+- **Vary critter start positions** slightly each session (±8–16 px jitter within their zone)
+- **Firefly spawn** — wider roam radius, more position variance fits its "wanders widely" design
+
+Use a fixed session seed (`srand(rnd(1000))` once at `_init`) so the layout is consistent within a session but varies between runs.
+
+### Migration path (platforms array → map-based)
+
+When terrain tiles are drawn and the map is laid out:
+
+1. Set **flag 0** on all solid tile types in the sprite Flags tab
+2. Replace `resolve_x` / `resolve_y` platform lookups with `fget(mget(tx, ty), 0)` checks
+3. Replace all `rectfill` terrain drawing with `map(0, 0, 0, 0, 120, 32)` (outdoor) or the appropriate indoor region
+4. Delete the `platforms` table
+
+---
+
+## PICO-8 Hard Limits Reference
+
+| Limit | Value | Notes |
+|-------|-------|-------|
+| **Token budget** | 8,192 tokens | Tightest constraint for a full game. Check live count in the code editor footer (bottom-right). Target: stay under ~7,000 before starting a major new system. |
+| **Sprite slots** | 256 (8×8 px each) | Shared across all characters, items, terrain, furniture. Plan slot groups early — see SPRITES.md. |
+| **Map size** | 128×64 tiles | Enough for a large outdoor area or several indoor rooms; design to fit. |
+| **`dset` save slots** | 256 (0-indexed) | Assign and document before adding any new save-dependent system. |
+| **Display** | 128×128 px, 16 colours | Keep UI minimal; no room for large overlays. |
+| **SFX slots** | 64 | Songs + effects; budget them alongside gameplay SFX. |
+| **Music patterns** | 64 | Each pattern chains SFX channels into a musical phrase. |
+
+### Token-saving strategies (in priority order)
+
+1. **Extract helper functions** — biggest win; deduplicating collision, UI, and menu logic pays off fast
+2. **Remove dead/debug code** — commented blocks and `print()` debug calls all count
+3. **Shorten variable names** — last resort; e.g. `on_ground` → `og` (only when within ~500 of the limit)
+4. **Multi-cart split** — if approaching ~7,500 tokens, split outdoor + indoor into two carts sharing the same `cartdata()` ID (see Multi-Cart Release Strategy above)
+
+---
+
+## Status Snapshot
+
+*Last updated: 2026-03-11*
+
+| Budget | Used | Total | Notes |
+|--------|------|-------|-------|
+| Lines of code | ~1,308 | — | ~38 KB file size |
+| Tokens | Well under limit | 8,192 | Check PICO-8 editor footer for live count |
+| `dset` slots | 30 (slots 0–29) | 256 | Music notes (0–23), critter catches (24–29) |
+| Sprite slots | 0 drawn | 256 | No pixel art yet; all placeholders |
+| Map tiles | Not yet used | 128×64 | Indoor rooms not yet map-based |
+
+**Systems in the cart as of this date:** outdoor physics & movement, scene manager (outdoor → floor1 → floor2 → bedroom), indoor top-down, camera, music notes + piano, resource nodes, NPC patrols, dialogue, task flags, crafting, cooking, critter AI + capture + display stands.

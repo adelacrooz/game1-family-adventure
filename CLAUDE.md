@@ -166,53 +166,70 @@ Players collect color-coded music notes scattered across the outdoor area. Compl
 
 ## Current Cart (`game1.p8`)
 
-**Outdoor platformer prototype.** Physics working, no sprites, enemies, or win condition.
+**Outdoor platformer prototype.** Core systems built; placeholder graphics (no pixel sprites yet).
+
+See [SPRITES.md](SPRITES.md) for the full sprite slot plan and art guidance.
 
 ### Controls
 
 | Input | Action |
 |-------|--------|
-| Left / Right arrows | Move |
-| O button (`btn(4)`) | Jump |
+| Left / Right | Move |
+| O (`btn(4)`) | Jump / confirm / interact |
+| X (`btn(5)`) | Close menu / cancel |
+| Double-tap Left or Right | Air dash (in air only) |
+| Down + O | Slide dash (while grounded) |
+| Hold direction toward wall (airborne) | Wall slide |
+| O while wall sliding | Wall jump |
 
-### Physics Constants
+### Physics Constants *(current prototype values — may be tuned)*
 
 | Variable | Value | Purpose |
 |----------|-------|---------|
 | `gravity` | 0.35 | Applied each frame when airborne |
 | `max_fall` | 4 | Terminal velocity cap |
-| `jump_force` | -7 | Vertical velocity on jump |
+| `jump_force` | -4.5 | Vertical velocity on jump |
 | `move_speed` | 2.2 | Max horizontal speed |
 | `move_accel` | 0.4 | Acceleration per frame |
 | `ground_friction` | 0.82 | Velocity multiplier when grounded with no input |
 | `coyote_frames` | 6 | Frames after leaving ledge where jump still works |
 | `jump_buffer_frames` | 5 | Frames a jump press is remembered before landing |
+| `dash_spd` | 6.5 | Horizontal speed during a dash |
+| `dash_frames` | 6 | Duration of a dash |
+| `double_tap_frames` | 10 | Window (frames) to detect a double-tap |
+| `wall_jump_spd` | 2.8 | Horizontal kick speed on wall jump |
+| `wall_coyote` | 8 | Grace frames after leaving a wall |
+| `wall_slide_max` | 0.6 | Max fall speed while sliding a wall |
+| `side_jump_force` | -6.4 | Vertical force on side/wall jump |
+| `side_jump_hspd` | 2.2 | Max horizontal speed during side jump |
 
 ### Player Object (`p`)
 
 - Position: `p.x`, `p.y` (top-left of hitbox)
 - Velocity: `p.vx`, `p.vy`
 - Hitbox: 6×8 px
-- State: `p.on_ground`
+- State flags: `p.on_ground`, `p.can_dash`, `p.facing`, `p.anim_t`
+- Global state: `coyote_timer`, `jump_buffer`, `dash_timer`, `wall_dir`, `wall_timer`, `side_jump`, `is_slide_dash`
 
 ### Collision
 
 - AABB overlap via `rect_overlap()`
 - `resolve_x()` — tests prospective position before moving; zeroes `p.vx` on wall hit
 - `resolve_y()` — snaps to platform top on landing, sets `p.on_ground`; bounces off ceilings
+- Platforms support `onetop=true` (pass-through from below, land on top)
 
 ### Level Layout
 
 - **Width:** 960 px, 4 areas
-- **Ground:** full-width platform at y=120
-- **Platforms:** hardcoded array `platforms` — each entry is `{x, y, w, h}`
+- **Ground:** full-width platform at y=120 (gap at x=620–692, 72 px wide pit)
+- **Platforms:** hardcoded array `platforms` — each entry is `{x, y, w, h[, onetop=true]}`
 - **Camera:** `cam_x = mid(0, p.x-64, level_width-128)` — centers player, clamped at edges
 
 ### Draw
 
 - Sky: two `rectfill` bands (light blue + cyan)
 - Platforms: dark green fill + light green outline
-- Player: `circfill` placeholder — replace with `spr()` once sprites are drawn
+- Player: `circfill` placeholder — replace with `spr(1, p.x, p.y)` once sprites are drawn
 
 ---
 
