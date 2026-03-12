@@ -123,8 +123,14 @@ indoor_spd=1.5
 level_width=960
 platforms={
  -- ground split around pit (gap x=620-692, 72px wide = 12x player w)
- {0,120,620,16},
+ -- and washed-out trail gap (x=530-597, 67px wide, 20px deep ditch)
+ {0,120,530,16},
+ {597,120,23,16},
  {692,120,276,16},
+ -- washed-out ditch floor (20px below ground; shallow enough to jump back out)
+ {530,140,67,8},
+ -- race hurdle: a log across the trail near the end of the race
+ {386,112,8,8},
  -- pit side walls (solid, below ground plate, y=136-380)
  {618,136,2,244},
  {692,136,2,244},
@@ -175,8 +181,9 @@ outdoor_doors={
 -- dset slots: 0-7 red, 8-15 blue, 16-23 yellow
 note_defs={
  -- 8 red  (area 1 focus)
+ -- note 7 sits just past the washed-out gap as a visible incentive
  {72,88,8},{152,64,8},{232,88,8},{320,48,8},
- {88,40,8},{270,24,8},{424,88,8},{500,56,8},
+ {88,40,8},{270,24,8},{424,88,8},{606,108,8},
  -- 8 blue (area 2-3)
  {580,88,12},{456,32,12},{532,16,12},{664,88,12},
  {752,64,12},{824,88,12},{700,40,12},{776,24,12},
@@ -309,7 +316,9 @@ function get_dlg(who)
  elseif who=="bro" then
   return {"wanna play outside?","i saw a frog","at the lake!"}
  elseif who=="racer" then
-  if race_npc.state=="loss" then
+  if race_npc.state=="win" then
+   return {"nice one, miles!","hey, the trail's","washed out up ahead.","bet you can jump it!"}
+  elseif race_npc.state=="loss" then
    return {"so close, miles!","hold x to run","faster. try again?"}
   end
   return {"hey miles! race me","to the big tree!","first one there wins!"}
@@ -345,7 +354,11 @@ function on_dlg_close()
    dset(30,2)
   end
  elseif dlg_who=="racer" then
-  if race_npc.state=="idle" or race_npc.state=="loss" then
+  if race_npc.state=="win" then
+   upgrades.run=true
+   dset(40,1)
+   upgrade_flash={msg="running unlocked!\nhold x to sprint!",t=180}
+  elseif race_npc.state=="idle" or race_npc.state=="loss" then
    race_npc.npc_x=150
    race_npc.state="ready"
    race_npc.timer=45
@@ -924,9 +937,7 @@ function update_outdoor()
   race_npc.npc_x+=2.4
   if p.x>=480 and race_npc.npc_x<480 then
    race_npc.state="win"
-   upgrades.run=true
-   dset(40,1)
-   upgrade_flash={msg="running unlocked!\nhold x to sprint!",t=180}
+   open_dlg("racer")
   elseif race_npc.npc_x>=480 then
    race_npc.state="loss"
   end
@@ -1229,6 +1240,14 @@ function draw_world_bg()
   rectfill(pl[1],pl[2],pl[1]+pl[3]-1,pl[2]+pl[4]-1,3)
   rect(pl[1],pl[2],pl[1]+pl[3]-1,pl[2]+pl[4]-1,7)
  end
+ -- race hurdle: draw over platform as a brown log
+ rectfill(386,112,393,119,4)
+ rect(386,112,393,119,7)
+ -- washed-out trail gap: ditch opening + caution sign
+ rectfill(530,120,596,139,4)  -- brown dirt ditch walls
+ line(528,116,528,120,4)      -- sign post
+ rectfill(520,110,536,116,4)  -- sign board
+ print("!",528,111,7)
  draw_critters()
  -- race npc (hidden once running is unlocked)
  if not upgrades.run then
