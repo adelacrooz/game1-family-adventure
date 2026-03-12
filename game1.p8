@@ -310,9 +310,9 @@ function get_dlg(who)
   return {"wanna play outside?","i saw a frog","at the lake!"}
  elseif who=="racer" then
   if race_npc.state=="loss" then
-   return {"so close!","hold x to run","faster. try again?"}
+   return {"so close, miles!","hold x to run","faster. try again?"}
   end
-  return {"hey! race me to","the big tree!","first one there wins!"}
+  return {"hey miles! race me","to the big tree!","first one there wins!"}
  elseif who=="pit_frog" then
   return {"croak! i'm stuck!","push off the walls","then press o!","(wall jump unlocked!)"}
  elseif who=="beetle" then
