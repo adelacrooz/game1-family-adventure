@@ -7,7 +7,13 @@ __lua__
 -- ===========================
 -- scene manager
 -- ===========================
-scene="outdoor"
+scene="title"
+
+-- title screen state
+title_sel=1         -- 1=continue  2=new game
+title_confirm=false -- showing erase confirmation?
+title_csel=2        -- confirm cursor: 1=yes  2=no (default no)
+title_pb={false,false,false,false,false,false} -- prev buttons
 
 spawns={
  outdoor={x=24,y=112},
@@ -769,7 +775,7 @@ function _init()
   caught[t]=dget(critter_slot[t])==1
  end
  init_critters()
- goto_scene("outdoor")
+ scene="title"
 end
 
 function do_jump()
@@ -876,8 +882,99 @@ end
 -- ===========================
 -- update
 -- ===========================
+-- ===========================
+-- title screen
+-- ===========================
+function new_game()
+ for i=0,45 do dset(i,0) end
+ init_notes()
+ tasks={fish=0}
+ upgrades={run=false,dash=false,wall_jump=false}
+ beetle_rescued=false
+ frog_rescued=false
+ for i,t in ipairs(critter_types) do caught[t]=false end
+ init_critters()
+ goto_scene("outdoor")
+end
+
+function update_title()
+ -- read buttons with per-frame debounce
+ local pb=title_pb
+ local up=btn(2) and not pb[3]
+ local dn=btn(3) and not pb[4]
+ local o=btn(4) and not pb[5]
+ local x=btn(5) and not pb[6]
+ title_pb={btn(0),btn(1),btn(2),btn(3),btn(4),btn(5)}
+
+ if title_confirm then
+  if up or dn then
+   title_csel=title_csel==1 and 2 or 1
+  end
+  if x then title_confirm=false end
+  if o then
+   if title_csel==1 then
+    new_game()
+   else
+    title_confirm=false
+   end
+  end
+ else
+  if up or dn then
+   title_sel=title_sel==1 and 2 or 1
+  end
+  if o then
+   if title_sel==1 then
+    goto_scene("outdoor")
+   else
+    title_confirm=true
+    title_csel=2  -- default cursor on "no"
+   end
+  end
+ end
+end
+
+function draw_title()
+ cls(1)
+ -- sky gradient bands
+ rectfill(0,60,127,127,3)
+
+ -- title
+ print("family",34,28,7)
+ print("adventure",28,36,10)
+ -- divider
+ line(30,46,97,46,5)
+
+ -- has any save data?
+ local has_save=false
+ for i=0,45 do
+  if dget(i)~=0 then has_save=true break end
+ end
+
+ local c1=title_sel==1 and 10 or 6
+ local c2=title_sel==2 and 10 or 6
+ local x1=title_sel==1 and ">" or " "
+ local x2=title_sel==2 and ">" or " "
+
+ print(x1..(has_save and "continue" or "play"),38,58,c1)
+ print(x2.."new game",38,68,c2)
+
+ -- confirmation overlay
+ if title_confirm then
+  rectfill(20,40,107,88,0)
+  rect(20,40,107,88,7)
+  print("erase save data?",24,46,7)
+  print("all progress lost.",24,54,6)
+  local y1=title_csel==1 and 10 or 6
+  local y2=title_csel==2 and 10 or 6
+  print((title_csel==1 and ">" or " ").."yes",38,68,y1)
+  print((title_csel==2 and ">" or " ").."no",38,78,y2)
+ end
+end
+
 function _update()
- if scene=="outdoor" or scene=="outdoor2" then
+ if scene=="title" then
+  update_title()
+ elseif scene=="outdoor" or scene=="outdoor2" then
   update_outdoor()
  else
   update_indoor()
@@ -1217,7 +1314,9 @@ end
 -- draw
 -- ===========================
 function _draw()
- if scene=="outdoor" or scene=="outdoor2" then
+ if scene=="title" then
+  draw_title()
+ elseif scene=="outdoor" or scene=="outdoor2" then
   draw_outdoor()
  else
   draw_indoor()
