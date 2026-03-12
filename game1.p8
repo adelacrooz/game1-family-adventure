@@ -77,6 +77,25 @@ x_tap_timer=0
 left_tap_timer=0
 right_tap_timer=0
 
+-- movement upgrades (unlocked via challenges, dset 40-42)
+upgrades={run=false,dash=false,wall_jump=false}
+
+-- trail race npc (outdoor)
+race_npc={npc_x=150,y=112,state="idle",timer=0}
+-- "idle"|"ready"|"racing"|"loss"|"win"
+
+-- rescue states (dset 44-45)
+beetle_rescued=false
+frog_rescued=false
+
+-- near-upgrade interaction flags (set each frame in update_outdoor)
+near_racer=false
+near_stuck_beetle=false
+near_pit_frog=false
+
+-- upgrade unlock flash {msg, t=frames remaining}
+upgrade_flash={msg="",t=0}
+
 -- outdoor physics constants
 gravity=0.35
 max_fall=4
@@ -289,6 +308,15 @@ function get_dlg(who)
   return {"hi sweetie!","have you tried","the piano?"}
  elseif who=="bro" then
   return {"wanna play outside?","i saw a frog","at the lake!"}
+ elseif who=="racer" then
+  if race_npc.state=="loss" then
+   return {"so close!","hold x to run","faster. try again?"}
+  end
+  return {"hey! race me to","the big tree!","first one there wins!"}
+ elseif who=="pit_frog" then
+  return {"croak! i'm stuck!","push off the walls","then press o!","(wall jump unlocked!)"}
+ elseif who=="beetle" then
+  return {"a log fell on me!","you saved me! thanks","double-tap a direction","to dash!"}
  end
  return {"..."}
 end
@@ -316,6 +344,30 @@ function on_dlg_close()
    tasks.fish=2
    dset(30,2)
   end
+ elseif dlg_who=="racer" then
+  if race_npc.state=="idle" or race_npc.state=="loss" then
+   race_npc.npc_x=150
+   race_npc.state="ready"
+   race_npc.timer=45
+  end
+ elseif dlg_who=="pit_frog" then
+  if not frog_rescued then
+   upgrades.wall_jump=true
+   dset(42,1)
+   frog_rescued=true
+   dset(45,1)
+   upgrade_flash={msg="wall jump!\no near wall",t=180}
+   init_critters()
+  end
+ elseif dlg_who=="beetle" then
+  if not beetle_rescued then
+   upgrades.dash=true
+   dset(41,1)
+   beetle_rescued=true
+   dset(44,1)
+   upgrade_flash={msg="dash unlocked!\ntap dir twice",t=180}
+   init_critters()
+  end
  end
 end
 
@@ -335,8 +387,13 @@ function draw_dlg()
  rect(4,88,123,122,7)
  -- npc name (colored)
  local ncol=7
- for n in all(npcs) do
-  if n.name==dlg_who then ncol=n.col break end
+ local xcols={racer=14,pit_frog=11,beetle=3}
+ if xcols[dlg_who] then
+  ncol=xcols[dlg_who]
+ else
+  for n in all(npcs) do
+   if n.name==dlg_who then ncol=n.col break end
+  end
  end
  print(dlg_who..":",8,91,ncol)
  -- current line
@@ -471,7 +528,10 @@ near_critter=nil
 function init_critters()
  critters={}
  for cd in all(critter_defs) do
-  if not caught[cd.typ] then
+  local skip=
+   (cd.typ=="beetle" and not beetle_rescued) or
+   (cd.typ=="frog"   and not frog_rescued)
+  if not caught[cd.typ] and not skip then
    add(critters,{
     x=cd.x,y=cd.y,typ=cd.typ,fly=cd.fly,
     zx1=cd.zx1,zx2=cd.zx2,zy1=cd.zy1,zy2=cd.zy2,
@@ -687,6 +747,11 @@ function _init()
  cartdata("game1_save")
  init_notes()
  tasks.fish=dget(30)
+ upgrades.run=dget(40)==1
+ upgrades.dash=dget(41)==1
+ upgrades.wall_jump=dget(42)==1
+ beetle_rescued=dget(44)==1
+ frog_rescued=dget(45)==1
  for i,t in ipairs(critter_types) do
   caught[t]=dget(critter_slot[t])==1
  end
@@ -810,6 +875,14 @@ function update_outdoor()
  note_t+=1
  if res_flash>0 then res_flash-=1 end
 
+ -- pause movement during outdoor dialogue
+ if dlg_open then
+  update_dlg()
+  prev_o=btn(4) prev_x=btn(5)
+  prev_left=btn(0) prev_right=btn(1)
+  return
+ end
+
  -- find near critter
  near_critter=nil
  for c in all(critters) do
@@ -831,6 +904,31 @@ function update_outdoor()
  for d in all(outdoor_doors[scene]) do
   if rect_overlap(p.x,p.y,p.w,p.h,d.x,d.y,d.w,d.h) then
    near_portal=d break
+  end
+ end
+
+ -- near upgrade interaction flags
+ near_racer=not upgrades.run
+  and (race_npc.state=="idle" or race_npc.state=="loss")
+  and rect_overlap(p.x,p.y,p.w,p.h,race_npc.npc_x-4,race_npc.y-4,14,14)
+ near_stuck_beetle=not beetle_rescued and not caught.beetle
+  and rect_overlap(p.x,p.y,p.w,p.h,676,108,14,14)
+ near_pit_frog=not frog_rescued and not caught.frog
+  and rect_overlap(p.x,p.y,p.w,p.h,648,368,14,14)
+
+ -- race NPC update
+ if race_npc.state=="ready" then
+  race_npc.timer-=1
+  if race_npc.timer<=0 then race_npc.state="racing" end
+ elseif race_npc.state=="racing" then
+  race_npc.npc_x+=2.4
+  if p.x>=480 and race_npc.npc_x<480 then
+   race_npc.state="win"
+   upgrades.run=true
+   dset(40,1)
+   upgrade_flash={msg="running unlocked!\nhold x to sprint!",t=180}
+  elseif race_npc.npc_x>=480 then
+   race_npc.state="loss"
   end
  end
 
@@ -865,7 +963,9 @@ function update_outdoor()
    end
   end
  else
-  if p.on_ground then p.air_sprint=btn(5) end
+  if p.on_ground and (upgrades.run or race_npc.state=="racing") then
+   p.air_sprint=btn(5)
+  end
   local spd=p.air_sprint and move_speed*1.7 or move_speed
   local sprint_spd=move_speed*1.7
   if btn(0) then
@@ -894,6 +994,12 @@ function update_outdoor()
   if near_portal then
    goto_scene(near_portal.dest)
    return
+  elseif near_racer then
+   open_dlg("racer")
+  elseif near_pit_frog then
+   open_dlg("pit_frog")
+  elseif near_stuck_beetle then
+   open_dlg("beetle")
   elseif near_critter and inv.net>0 then
    caught[near_critter.typ]=true
    dset(critter_slot[near_critter.typ],1)
@@ -903,7 +1009,7 @@ function update_outdoor()
    inv[near_node.typ]+=1
    last_gathered=near_node.typ
    res_flash=30
-  elseif p.on_ground and btn(3) then
+  elseif upgrades.dash and p.on_ground and btn(3) then
    -- slide dash: hold down + O (down-left/right also ok)
    local dx=btn(0) and -1 or (btn(1) and 1 or p.facing)
    dash_dvx=dx*dash_spd
@@ -916,7 +1022,7 @@ function update_outdoor()
    dash_timer=dash_frames
    dash_is_ground=true
    is_slide_dash=true
-  elseif not p.on_ground and wall_timer>0 then
+  elseif upgrades.wall_jump and not p.on_ground and wall_timer>0 then
    -- wall jump: kick away from wall (hold X for extra horizontal kick)
    local wj_boost=btn(5) and 1.4 or 1.0
    p.vx=-wall_dir*wall_jump_spd*wj_boost
@@ -926,7 +1032,7 @@ function update_outdoor()
    coyote_timer=0
    jump_buffer=0
    sfx(0)
-  elseif not p.on_ground and p.can_dash then
+  elseif upgrades.dash and not p.on_ground and p.can_dash then
    -- air dash: press o while airborne (once per jump)
    local dx=0
    if btn(0) then dx=-1 elseif btn(1) then dx=1 end
@@ -975,7 +1081,7 @@ function update_outdoor()
  local x_press=btn(5) and not prev_x
  if x_tap_timer>0 then x_tap_timer-=1 end
  if x_press then
-  if x_tap_timer>0 and p.on_ground then
+  if upgrades.dash and x_tap_timer>0 and p.on_ground then
    x_tap_timer=0
    local dx=0
    if btn(0) then dx=-1 elseif btn(1) then dx=1 end
@@ -999,7 +1105,7 @@ function update_outdoor()
  if left_tap_timer>0 then left_tap_timer-=1 end
  if right_tap_timer>0 then right_tap_timer-=1 end
  if left_press then
-  if left_tap_timer>0 and p.on_ground and dash_timer==0 then
+  if upgrades.dash and left_tap_timer>0 and p.on_ground and dash_timer==0 then
    left_tap_timer=0
    dash_dvx=-dash_spd dash_dvy=0
    dash_spr=scene=="outdoor" and 53 or 26
@@ -1008,7 +1114,7 @@ function update_outdoor()
   else left_tap_timer=double_tap_frames end
  end
  if right_press then
-  if right_tap_timer>0 and p.on_ground and dash_timer==0 then
+  if upgrades.dash and right_tap_timer>0 and p.on_ground and dash_timer==0 then
    right_tap_timer=0
    dash_dvx=dash_spd dash_dvy=0
    dash_spr=scene=="outdoor" and 53 or 26
@@ -1124,6 +1230,29 @@ function draw_world_bg()
   rect(pl[1],pl[2],pl[1]+pl[3]-1,pl[2]+pl[4]-1,7)
  end
  draw_critters()
+ -- race npc (hidden once running is unlocked)
+ if not upgrades.run then
+  local rx=race_npc.npc_x
+  circfill(rx+3,race_npc.y+3,4,14)
+  pset(rx+3,race_npc.y+3,7)
+  if race_npc.state=="idle" or race_npc.state=="loss" then
+   print("kid",rx-1,race_npc.y-7,7)
+  end
+  if race_npc.state~="idle" then
+   line(480,108,480,120,10) -- finish line
+  end
+ end
+ -- stuck beetle (before rescue; shows log over it)
+ if not beetle_rescued and not caught.beetle then
+  rectfill(673,109,693,113,4)
+  circfill(683,115,3,critter_col.beetle)
+  pset(683,115,7)
+ end
+ -- pit frog (stuck at bottom until rescued)
+ if not frog_rescued and not caught.frog then
+  circfill(658,375,3,critter_col.frog)
+  pset(658,375,7)
+ end
  -- resource nodes
  for rn in all(res_nodes) do
   circfill(rn.x+3,rn.y+3,5,rn.col)
@@ -1181,6 +1310,14 @@ function draw_outdoor()
  end
  draw_player()
 
+ -- upgrade interaction prompts (world space)
+ if near_racer then
+  local msg=race_npc.state=="loss" and "o:retry" or "o:race!"
+  print(msg,race_npc.npc_x-4,race_npc.y-14,10)
+ end
+ if near_stuck_beetle then print("o:help!",672,100,10) end
+ if near_pit_frog then print("o:talk",648,360,10) end
+
  -- prompts (world space)
  if near_critter then
   if inv.net>0 then
@@ -1194,6 +1331,20 @@ function draw_outdoor()
  end
 
  camera()
+ -- race countdown / go! overlay
+ if race_npc.state=="ready" then
+  local n=race_npc.timer>30 and "3" or race_npc.timer>15 and "2" or "1"
+  print(n,61,54,10)
+ elseif race_npc.state=="racing" then
+  print("go!",57,54,7)
+ end
+ -- upgrade unlock flash
+ if upgrade_flash.t>0 then
+  upgrade_flash.t-=1
+  rectfill(14,54,113,72,0)
+  rect(14,54,113,72,10)
+  print(upgrade_flash.msg,18,58,10)
+ end
  -- note HUD
  circfill(4,4,2,8)  print(inv_notes.r.."/8",9, 2,8)
  circfill(4,11,2,12) print(inv_notes.b.."/8",9, 9,12)
@@ -1205,7 +1356,11 @@ function draw_outdoor()
   print("w"..inv.wood.." b"..inv.berries,76,2,5)
   print("h"..inv.herbs.." f"..inv.fish,76,9,5)
  end
- print("arrows:move  o:jump",2,120,6)
+ local hint="move  o:jump"
+ if upgrades.run then hint=hint.."  x:run" end
+ if upgrades.dash then hint=hint.."  xx:dash" end
+ if upgrades.wall_jump then hint=hint.."  wj" end
+ print(hint,2,120,6)
 end
 
 function draw_indoor()
