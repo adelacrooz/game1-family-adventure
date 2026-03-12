@@ -14,6 +14,11 @@
 |--------|-------|
 | ✅ Outdoor physics | Gravity, jump, coyote time, jump buffer, acceleration, friction |
 | ✅ Advanced movement | Wall slide + wall jump, air dash (double-tap), slide dash (Down+O), side jump with sprite animation |
+| ✅ Movement upgrade gating | Sprint, dash, wall jump each locked behind a challenge; unlocked via NPC interactions; persisted to dset |
+| ✅ Race challenge | Neighborhood kid NPC at x≈150; race to x=480 finish line; log hurdle mid-race teaches sprint+jump combo |
+| ✅ Washed-out trail gap | 67 px ditch at x=530–597 after race finish; sprint+jump required to cross; red music note across as incentive |
+| ✅ Beetle rescue challenge | Stuck beetle at x≈680 teaches air/ground dash on rescue |
+| ✅ Frog pit rescue challenge | Frog at pit floor (x=620–692) teaches wall jump; pit walls are the only escape |
 | ✅ Scene manager | outdoor → floor1 → floor2 → bedroom, with spawn points |
 | ✅ Indoor top-down | 4-way movement, wall collision, door/stair triggers |
 | ✅ Camera | Horizontal scroll (outdoor); fixed 128×128 (indoor) |
@@ -92,7 +97,13 @@
 | 16–23 | Yellow music notes |
 | 24–29 | Critter catches (6 critters) |
 | 30–39 | Task/objective flags — *reserved* |
-| 40+ | Available |
+| 40 | `upgrades.run` — sprint unlocked |
+| 41 | `upgrades.dash` — air/ground dash unlocked |
+| 42 | `upgrades.wall_jump` — wall jump unlocked |
+| 43 | Reserved for `upgrades.slide` (slide dash, optional) |
+| 44 | `beetle_rescued` — beetle rescue completed |
+| 45 | `frog_rescued` — frog pit rescue completed |
+| 46+ | Available |
 
 ---
 
