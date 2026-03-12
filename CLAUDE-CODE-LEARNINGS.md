@@ -82,6 +82,46 @@ Run `/permissions` inside Claude Code to see all active rules and their sources.
 
 ---
 
+## Git Branches
+
+### What's a Branch?
+
+A branch is like a parallel copy of your project where you can make changes without affecting the main version. Claude Code (mobile and desktop) often creates branches automatically when making bigger changes.
+
+### Fetch vs. Pull
+
+| Command | What it does |
+|---------|-------------|
+| `git fetch` | Downloads info about remote branches — does **not** change your files |
+| `git pull` | Downloads **and** applies changes to your current branch |
+
+Run `git fetch --all` to see any new branches that exist on GitHub but not yet on your computer.
+
+### Listing Branches
+
+```bash
+git branch -a
+```
+
+- Branches starting with `remotes/origin/` live on GitHub (remote)
+- The `*` marks your current branch
+
+### Switching Branches
+
+```bash
+git checkout branch-name
+```
+
+- Safe to do when your working tree is **clean** (no unsaved/uncommitted changes)
+- Switches all your project files to match that branch
+- Switch back to main anytime: `git checkout main`
+
+### Document Before You Switch
+
+If you want to save notes or edit files, do it on `main` **before** switching branches — that way your notes end up where you want them.
+
+---
+
 ## Tips
 
 - Start with `"defaultMode": "acceptEdits"` + a short allow list — good balance of speed and safety.
