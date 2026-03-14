@@ -114,7 +114,7 @@ jump_buffer_frames=5
 dash_spd=6.5
 dash_frames=6
 double_tap_frames=10
-wall_jump_spd=2.8   -- horizontal kick when wall jumping
+wall_jump_spd=3.73  -- horizontal kick when wall jumping (just below sprint_spd so coast never fires)
 wall_coyote=8       -- grace frames after leaving a wall
 wall_slide_max=0.6  -- max fall speed while sliding a wall
 side_jump_force=-6.4 -- higher arc than normal jump_force
@@ -128,33 +128,24 @@ indoor_spd=1.5
 -- ===========================
 level_width=960
 platforms={
- -- ground split around pit (gap x=620-692, 72px wide = 12x player w)
- -- and washed-out trail gap (x=530-597, 67px wide, 20px deep ditch)
+ -- ground; frog pit gap at x=530-597 (67px wide, 80px deep, floor y=200)
  {0,120,530,16},
- {597,120,23,16},
- {692,120,276,16},
- -- washed-out ditch floor (20px below ground; shallow enough to jump back out)
- {530,140,67,8},
+ {597,120,371,16},
+ -- frog pit walls
+ {528,136,2,72},
+ {595,136,2,72},
+ -- frog pit floor
+ {530,200,67,8},
  -- race hurdle: a log across the trail near the end of the race
  {386,112,8,8},
- -- pit side walls (solid, below ground plate, y=136-380)
- {618,136,2,244},
- {692,136,2,244},
- -- pit floor (solid, 260px below ground)
- {620,380,72,8},
  -- floating platforms (onetop: pass through from below, land on top)
+ -- pre-race area (before NPC at x=150)
  {48,96,48,8,  onetop=true},
- {128,72,48,8, onetop=true},
- {208,96,48,8, onetop=true},
- {288,56,64,8, onetop=true},
  {80,48,32,8,  onetop=true},
- {260,32,24,8, onetop=true},
- -- area 2
- {400,96,64,8, onetop=true},
+ {128,72,48,8, onetop=true},
+ -- race zone (x=150-480) kept clear except the hurdle at x=386
+ -- area 2 (after finish line x=480)
  {480,64,48,8, onetop=true},
- {560,96,56,8, onetop=true},
- {440,40,32,8, onetop=true},
- {520,24,24,8, onetop=true},
  -- area 3 (was {640,96,48,8} -- shifted right past wider pit)
  {672,96,40,8, onetop=true},
  {720,72,64,8, onetop=true},
@@ -186,16 +177,16 @@ outdoor_doors={
 -- colors: 8=red  12=blue  10=yellow
 -- dset slots: 0-7 red, 8-15 blue, 16-23 yellow
 note_defs={
- -- 8 red  (area 1 focus)
- -- note 7 sits just past the washed-out gap as a visible incentive
- {72,88,8},{152,64,8},{232,88,8},{320,48,8},
- {88,40,8},{270,24,8},{424,88,8},{606,108,8},
- -- 8 blue (area 2-3)
- {580,88,12},{456,32,12},{532,16,12},{664,88,12},
+ -- 8 red  (pre-race area + areas 2-4; race zone x=150-480 cleared)
+ -- slots 0-7; note at x=152 left on platform {128,72} which straddles start
+ {72,88,8},{152,64,8},{560,88,8},{720,64,8},
+ {88,40,8},{760,24,8},{800,88,8},{606,108,8},
+ -- 8 blue (area 2-3; slot 9 moved from x=456 to area 4)
+ {580,88,12},{860,28,12},{532,16,12},{664,88,12},
  {752,64,12},{824,88,12},{700,40,12},{776,24,12},
- -- 8 yellow (area 3-4 + accessible ground notes)
+ -- 8 yellow (area 3-4 + accessible ground notes; race-zone ground notes moved)
  {900,88,10},{940,48,10},{876,28,10},{40,110,10},
- {180,110,10},{460,110,10},{620,88,10},{840,72,10},
+ {100,110,10},{500,110,10},{620,88,10},{840,72,10},
 }
 
 -- maps pico-8 color to inv_notes key
@@ -242,9 +233,9 @@ piano_open=false
 piano_sel=1    -- selected slot: 1=red 2=blue 3=yellow
 piano_play=0   -- countdown (>0 = playing animation)
 
--- {display name, note color, inv_notes key}
+-- {display name, ui color, inv_notes key, music pattern}
 songs={
- {"lullaby",  8,"r"},
+ {"lullaby",  8,"r",8},
  {"march",   12,"b"},
  {"family",  10,"y"},
 }
@@ -260,7 +251,7 @@ tasks={fish=0}
 
 -- {x,y,typ,col} ヌ█⬆️ renewable outdoor gather spots
 res_nodes={
- {x=295,y=48, typ="berries",col=8},
+ {x=100,y=48, typ="berries",col=8},
  {x=340,y=112,typ="fish",   col=12},
  {x=600,y=112,typ="herbs",  col=11},
  {x=760,y=112,typ="wood",   col=4},
@@ -364,10 +355,12 @@ function on_dlg_close()
    upgrades.run=true
    dset(40,1)
    upgrade_flash={msg="running unlocked!\nhold x to sprint!",t=180}
-  elseif race_npc.state=="idle" or race_npc.state=="loss" then
+  elseif race_npc.state=="idle" then
    race_npc.npc_x=150
    race_npc.state="ready"
    race_npc.timer=45
+  elseif race_npc.state=="loss" then
+   race_npc.state="returning"
   end
  elseif dlg_who=="pit_frog" then
   if not frog_rescued then
@@ -533,9 +526,9 @@ critter_abbr={frog="frog",crab="crab",butterfly="bfly",
               beetle="btle",firefly="ffly",snake="snke"}
 
 critter_defs={
- {x=60, y=112,typ="frog",      fly=false,zx1=10, zx2=380,zy1=108,zy2=116},
- {x=200,y=112,typ="crab",      fly=false,zx1=10, zx2=380,zy1=108,zy2=116},
- {x=310,y=44, typ="butterfly", fly=true, zx1=270,zx2=420,zy1=30, zy2=56},
+ {x=60, y=112,typ="frog",      fly=false,zx1=10, zx2=140,zy1=108,zy2=116},
+ {x=70, y=112,typ="crab",      fly=false,zx1=10, zx2=140,zy1=108,zy2=116},
+ {x=500,y=44, typ="butterfly", fly=true, zx1=490,zx2=620,zy1=30, zy2=60},
  {x=680,y=112,typ="beetle",    fly=false,zx1=560,zx2=820,zy1=108,zy2=116},
  {x=520,y=96, typ="firefly",   fly=true, zx1=400,zx2=640,zy1=80, zy2=114},
  {x=820,y=112,typ="snake",     fly=false,zx1=700,zx2=950,zy1=108,zy2=116},
@@ -610,7 +603,8 @@ function update_piano()
  elseif btnp(4) then  -- O: play selected song
   if inv_notes[songs[piano_sel][3]]==8 then
    piano_play=90
-   -- sfx(piano_sel-1)  -- compose in pico-8 sfx editor, then uncomment
+   local pat=songs[piano_sel][4]
+   if pat then music(pat) end
   end
  elseif btnp(5) then  -- X: close
   piano_open=false
@@ -1024,7 +1018,7 @@ function update_outdoor()
  near_stuck_beetle=not beetle_rescued and not caught.beetle
   and rect_overlap(p.x,p.y,p.w,p.h,676,108,14,14)
  near_pit_frog=not frog_rescued and not caught.frog
-  and rect_overlap(p.x,p.y,p.w,p.h,648,368,14,14)
+  and rect_overlap(p.x,p.y,p.w,p.h,556,190,14,14)
 
  -- race NPC update
  if race_npc.state=="ready" then
@@ -1036,7 +1030,13 @@ function update_outdoor()
    race_npc.state="win"
    open_dlg("racer")
   elseif race_npc.npc_x>=480 then
-   race_npc.state="loss"
+   race_npc.state="loss"  -- wait at finish for player
+  end
+ elseif race_npc.state=="returning" then
+  race_npc.npc_x-=1.5
+  if race_npc.npc_x<=150 then
+   race_npc.npc_x=150
+   race_npc.state="idle"
   end
  end
 
@@ -1131,11 +1131,10 @@ function update_outdoor()
    dash_is_ground=true
    is_slide_dash=true
   elseif upgrades.wall_jump and not p.on_ground and wall_timer>0 then
-   -- wall jump: kick away from wall (hold X for extra horizontal kick)
-   local wj_boost=btn(5) and 1.4 or 1.0
-   p.vx=-wall_dir*wall_jump_spd*wj_boost
+   -- wall jump: kick away from wall
+   p.vx=-wall_dir*wall_jump_spd
    p.vy=jump_force
-   p.air_sprint=false  -- clear sprint flag so boost doesn't carry into air movement
+   p.air_sprint=true   -- sustain sprint-speed cap in air (feels forceful, identical with/without X)
    wall_timer=0
    coyote_timer=0
    jump_buffer=0
@@ -1327,13 +1326,17 @@ end
 function draw_world_bg()
  rectfill(0,0,level_width,120,12)
  -- underground dirt layer (visible when camera scrolls into pit)
- rectfill(0,120,level_width,390,4)
- -- pit shaft interior (black opening)
- rectfill(620,120,691,388,0)
+ rectfill(0,120,level_width,210,4)
+ -- frog pit shaft interior (black opening)
+ rectfill(530,120,596,208,0)
  -- tile sprite 0 along pit perimeter (left wall, right wall, floor)
- for ty=120,380,8 do spr(0,610,ty) end  -- left inner strip
- for ty=120,380,8 do spr(0,692,ty) end  -- right inner strip
- for tx=620,684,8 do spr(0,tx,388) end  -- bottom row
+ for ty=120,200,8 do spr(0,522,ty) end  -- left inner strip
+ for ty=120,200,8 do spr(0,596,ty) end  -- right inner strip
+ for tx=530,592,8 do spr(0,tx,200) end  -- bottom row
+ -- caution sign before frog pit
+ line(528,116,528,120,4)       -- sign post
+ rectfill(520,110,536,116,4)   -- sign board
+ print("!",528,111,7)
  -- platforms
  for pl in all(platforms) do
   rectfill(pl[1],pl[2],pl[1]+pl[3]-1,pl[2]+pl[4]-1,3)
@@ -1342,11 +1345,6 @@ function draw_world_bg()
  -- race hurdle: draw over platform as a brown log
  rectfill(386,112,393,119,4)
  rect(386,112,393,119,7)
- -- washed-out trail gap: ditch opening + caution sign
- rectfill(530,120,596,139,4)  -- brown dirt ditch walls
- line(528,116,528,120,4)      -- sign post
- rectfill(520,110,536,116,4)  -- sign board
- print("!",528,111,7)
  draw_critters()
  -- race npc (hidden once running is unlocked)
  if not upgrades.run then
@@ -1356,8 +1354,10 @@ function draw_world_bg()
   if race_npc.state=="idle" or race_npc.state=="loss" then
    print("kid",rx-1,race_npc.y-7,7)
   end
-  if race_npc.state~="idle" then
-   line(480,108,480,120,10) -- finish line
+  -- finish line: show while race is active, npc waits at finish, or npc is returning
+  if race_npc.state=="ready" or race_npc.state=="racing"
+   or race_npc.state=="loss" or race_npc.state=="returning" then
+   line(480,108,480,120,10)
   end
  end
  -- stuck beetle (before rescue; shows log over it)
@@ -1368,8 +1368,8 @@ function draw_world_bg()
  end
  -- pit frog (stuck at bottom until rescued)
  if not frog_rescued and not caught.frog then
-  circfill(658,375,3,critter_col.frog)
-  pset(658,375,7)
+  circfill(563,197,3,critter_col.frog)
+  pset(563,197,7)
  end
  -- resource nodes
  for rn in all(res_nodes) do
@@ -1434,7 +1434,7 @@ function draw_outdoor()
   print(msg,race_npc.npc_x-4,race_npc.y-14,10)
  end
  if near_stuck_beetle then print("o:help!",672,100,10) end
- if near_pit_frog then print("o:talk",648,360,10) end
+ if near_pit_frog then print("o:talk",553,182,10) end
 
  -- prompts (world space)
  if near_critter then
@@ -1479,6 +1479,7 @@ function draw_outdoor()
  if upgrades.dash then hint=hint.."  xx:dash" end
  if upgrades.wall_jump then hint=hint.."  wj" end
  print(hint,2,120,6)
+ if dlg_open then draw_dlg() end
 end
 
 function draw_indoor()
@@ -1603,6 +1604,10 @@ __sfx__
 011200000c0330802508744080250872508044177151b7151b7000f0251174411025246150f0240b7440b0250c0330802508744080250872524715277152e715080242e715080242e715246150f0240c7440c025
 d70800002f0262b02626006270263f0063f0062c0062200632006020061e006280060c0063c006220060c0062c006300060a0063200604006220062a006080062c006000061e0062000638006000063800636006
 790600003461134621346213461100001356010060100601006010060100601006010060100601006010060100601006010060100601006010060100601006010060100601006010060100601006010060100601
+010f0000200502005020050000002005020000200502005020050090001f0501f0001f050230001f050190001a0501a0501a0001a0001a0501a0501e0001b0001b0501b0501b000200001d0501d0502000020000
+010f00001f0501f0501f050000001f050000001f0501f0501f0501f0001d0501d0001d0501d0001d0501d0001d0501d050000001b0001b0501b0501f0001f0001f0501f0501f0501f05000000000000000000000
+010f00001f050000001f050000001f050000001f050000001f050000001d050000001b0501b0500000022000220502205000000000001b0501b05000000000001a0501a05000000000001b0501b0500000000000
+010f000020050200500000020050000002005020050000001f050000001f050000001f050000001a0501a05000000000001a0501a05000000000001b0501b05000000000001d0501d05000000000000000000000
 __music__
 00 01000000
 00 01424344
@@ -1612,4 +1617,8 @@ __music__
 00 01024344
 00 03044344
 02 05064344
+00 09424344
+00 0a404344
+00 09424344
+04 0b424344
 
